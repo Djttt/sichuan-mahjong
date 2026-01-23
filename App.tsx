@@ -1,0 +1,1226 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { GameState, Player, Suit, TileData, GamePhase, NetworkAction, SocketMessage } from './types';
+import { generateDeck, sortHand, SUIT_LABELS, SUITS, SUIT_COLORS } from './constants';
+import { Tile } from './components/Tile';
+import { DingQuePanel } from './components/DingQuePanel';
+import { TableCenter } from './components/TableCenter';
+import { PlayerAvatar } from './components/PlayerAvatar';
+import { getRecommendedDingQue, canHu, canGang, canPeng, calculateFan } from './services/gameLogic';
+import { ScoreToast } from './components/ScoreToast';
+import { Copy, Users, Play, LogIn, ArrowLeft, Bot } from 'lucide-react';
+
+const USER_ID_PREFIX = 'player-';
+
+function App() {
+  const [gameState, setGameState] = useState<GameState>({
+    roomId: '',
+    isMultiplayer: false,
+    phase: 'LOBBY',
+    currentTurnPlayerId: '',
+    remainingTiles: 0,
+    players: [],
+    lastDiscard: null,
+    myPlayerId: ''
+  });
+  
+  const [selectedTileId, setSelectedTileId] = useState<string | null>(null);
+  const [scoreEvents, setScoreEvents] = useState<{id: number, text: string, type: 'positive'|'negative'|'neutral'}[]>([]);
+    const [lobbyInput, setLobbyInput] = useState('');
+    const [wsReady, setWsReady] = useState(false);
+        const [showRules, setShowRules] = useState(false);
+    const [playerName, setPlayerName] = useState('');
+    const [skippedDiscardId, setSkippedDiscardId] = useState<string | null>(null);
+
+    // WebSocket Ref
+    const wsRef = useRef<WebSocket | null>(null);
+    const roomIdRef = useRef<string>('');
+
+  // --- INITIALIZATION ---
+  useEffect(() => {
+    // Generate a random ID for this session (used as player id)
+    const myId = `${USER_ID_PREFIX}${Math.floor(Math.random() * 10000)}`;
+    setGameState(prev => ({ ...prev, myPlayerId: myId }));
+
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const wsUrl = `${protocol}://${window.location.hostname}:6001/ws`;
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      setWsReady(true);
+    };
+
+    ws.onclose = () => {
+      setWsReady(false);
+    };
+
+    ws.onerror = (err) => {
+      console.error(err);
+      setWsReady(false);
+      addScoreToast('连接服务器失败，请刷新或检查网络。', 'negative');
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data) as SocketMessage;
+        if (!message.roomId || message.roomId !== roomIdRef.current) return;
+        handleNetworkMessage(message.action, 'server');
+      } catch (e) {
+        console.error('Invalid server message', e);
+      }
+    };
+
+    return () => {
+      ws.close();
+    };
+  }, []);
+
+  useEffect(() => {
+    roomIdRef.current = gameState.roomId;
+  }, [gameState.roomId]);
+
+  // --- NETWORK HANDLERS ---
+  const handleNetworkMessage = (action: NetworkAction, senderId: string) => {
+      // Whenever ANY valid game action happens, reset local skipped state so new discards are fresh.
+      // But only if it's a new discard or turn change.
+      if (action.type === 'ACTION_DISCARD') {
+          setSkippedDiscardId(null);
+      }
+
+      // Logic depends on if we are Host or Client
+      // If we are HOST (roomId === myPlayerId), we process actions.
+      // If we are CLIENT, we mostly listen for STATE_UPDATE.
+      setGameState(prev => {
+          const isHost = prev.roomId === prev.myPlayerId;
+
+          if (!isHost) {
+              // CLIENT LOGIC
+              if (action.type === 'STATE_UPDATE') {
+                  return { ...action.state, myPlayerId: prev.myPlayerId };
+              }
+              return prev;
+          }
+
+          // HOST LOGIC
+          if (action.type === 'JOIN') {
+              if (prev.players.some(p => p.id === action.player.id)) return prev;
+              const newPlayers = [...prev.players, action.player];
+              const newState: GameState = { ...prev, players: newPlayers };
+              broadcastState(newState);
+              return newState;
+          }
+
+          if (action.type === 'ACTION_DINGQUE') {
+              const newPlayers = prev.players.map(p => {
+                  if (p.id === action.playerId) {
+                      return { ...p, dingQue: action.suit, hand: sortHand(p.hand, action.suit) };
+                  }
+                  return p;
+              });
+
+              const allDone = newPlayers.every(p => p.dingQue !== null);
+              const nextPhase: GamePhase = allDone ? 'PLAYING' : 'DINGQUE';
+              const firstPlayerId = newPlayers[0]?.id ?? '';
+
+              // If entering PLAYING phase, the first player needs to draw a tile (14th tile)
+              if (allDone && firstPlayerId) {
+                  const pIndex = newPlayers.findIndex(p => p.id === firstPlayerId);
+                  if (pIndex !== -1) {
+                      // Generate random draw (Mocking the wall)
+                      const suits: Suit[] = ['WAN', 'TIAO', 'TONG'];
+                      const randomSuit = suits[Math.floor(Math.random() * 3)];
+                      const randomRank = Math.floor(Math.random() * 9) + 1;
+                      const newTile: TileData = { id: `start-draw-${Date.now()}`, suit: randomSuit, rank: randomRank };
+                      
+                      newPlayers[pIndex] = {
+                          ...newPlayers[pIndex],
+                          hand: [...newPlayers[pIndex].hand, newTile] // Do not sort yet
+                      };
+                  }
+              }
+
+              const newState: GameState = {
+                  ...prev,
+                  players: newPlayers,
+                  phase: nextPhase,
+                  currentTurnPlayerId: firstPlayerId
+              };
+              broadcastState(newState);
+              return newState;
+          }
+
+          if (action.type === 'ACTION_DISCARD') {
+              const sender = prev.players.find(p => p.id === action.playerId);
+              if (!sender) return prev;
+
+              const tileToRemove = sender.hand.find(t => t.id === action.tileId);
+              if (!tileToRemove) return prev;
+
+              const newHand = sender.hand.filter(t => t.id !== action.tileId);
+              const sortedHand = sortHand(newHand, sender.dingQue);
+
+              const newPlayers = prev.players.map(p => {
+                  if (p.id === action.playerId) {
+                      return { ...p, hand: sortedHand, discards: [...p.discards, tileToRemove] };
+                  }
+                  return p;
+              });
+
+              const currentIndex = newPlayers.findIndex(p => p.id === action.playerId);
+              let nextIndex = (currentIndex + 1) % newPlayers.length;
+              let safety = 0;
+              while (newPlayers[nextIndex]?.isHu && safety < newPlayers.length) {
+                  nextIndex = (nextIndex + 1) % newPlayers.length;
+                  safety++;
+              }
+              const nextPlayerId = newPlayers[nextIndex]?.id ?? '';
+
+              // Host authority: create a random draw for next player
+              const suits: Suit[] = ['WAN', 'TIAO', 'TONG'];
+              const randomSuit = suits[Math.floor(Math.random() * 3)];
+              const randomRank = Math.floor(Math.random() * 9) + 1;
+              const newTile: TileData = { id: `draw-${Date.now()}`, suit: randomSuit, rank: randomRank };
+
+              if (newPlayers[nextIndex] && !newPlayers[nextIndex].isHu) {
+                  const playerToUpdate = newPlayers[nextIndex];
+                  // Do NOT sort yet. Append to end.
+                  newPlayers[nextIndex] = {
+                      ...playerToUpdate,
+                      hand: [...playerToUpdate.hand, newTile] 
+                  };
+              }
+
+              const newState: GameState = {
+                  ...prev,
+                  players: newPlayers,
+                  lastDiscard: tileToRemove,
+                  currentTurnPlayerId: nextPlayerId,
+                  remainingTiles: Math.max(0, prev.remainingTiles - 1)
+              };
+
+              if (newState.remainingTiles === 0) newState.phase = 'GAME_OVER';
+
+              broadcastState(newState);
+              return newState;
+          }
+
+          if (action.type === 'ACTION_PENG') {
+              const actor = prev.players.find(p => p.id === action.playerId);
+              const targetTile = prev.lastDiscard;
+              if (!actor || !targetTile) return prev;
+
+              // 1. Revert the auto-draw of the current turn player (who was next after discard)
+              const interruptedPlayerId = prev.currentTurnPlayerId;
+              let newPlayers = prev.players.map(p => {
+                  if (p.id === interruptedPlayerId) {
+                       // Remove the last added tile (the draw from ACTION_DISCARD)
+                       // Safe to pop because we just added it in prev 'ACTION_DISCARD'
+                       const poppedHand = [...p.hand];
+                       poppedHand.pop(); 
+                       return { ...p, hand: poppedHand };
+                  }
+                  return p;
+              });
+
+              // 2. Remove tile from previous discarder
+              newPlayers = newPlayers.map(p => ({
+                  ...p,
+                  discards: p.discards.filter(t => t.id !== targetTile.id)
+              }));
+            
+              // 3. Process Actor Hand
+              // Remove 2 matching tiles
+              const matchSuit = targetTile.suit;
+              const matchRank = targetTile.rank;
+              const handTiles = actor.hand.filter(t => t.suit === matchSuit && t.rank === matchRank);
+              
+              // We need exactly 2 from hand + 1 from discard
+              const keptHand = actor.hand.filter(t => t.id !== handTiles[0].id && t.id !== handTiles[1].id);
+              const meld = [handTiles[0], handTiles[1], targetTile];
+              
+              newPlayers = newPlayers.map(p => {
+                  if (p.id === actor.id) {
+                      return {
+                          ...p,
+                          hand: sortHand(keptHand, p.dingQue), 
+                          melds: [...p.melds, meld]
+                      };
+                  }
+                  return p;
+              });
+
+              const newState: GameState = {
+                  ...prev,
+                  players: newPlayers,
+                  lastDiscard: null,
+                  currentTurnPlayerId: actor.id,
+                  // No draw for Peng
+              };
+              broadcastState(newState);
+              return newState;
+          }
+
+          if (action.type === 'ACTION_GANG') {
+              const actor = prev.players.find(p => p.id === action.playerId);
+              if (!actor) return prev;
+
+              // Gang requires drawing a replacement tile
+              const suits: Suit[] = ['WAN', 'TIAO', 'TONG'];
+              const randomSuit = suits[Math.floor(Math.random() * 3)];
+              const randomRank = Math.floor(Math.random() * 9) + 1;
+              const replacementTile: TileData = { id: `gang-draw-${Date.now()}`, suit: randomSuit, rank: randomRank };
+              
+              let newPlayers = [...prev.players];
+              let targetTile = prev.lastDiscard;
+
+              // Detect Gang Type
+              // If targetTileId is provided, it's a DIAN GANG (Ming)
+              const isDianGang = !!prev.lastDiscard && action.playerId !== prev.currentTurnPlayerId; 
+              
+              if (isDianGang && targetTile) {
+                  // DIAN GANG: Claim discard
+                  
+                  // 1. Revert Interrupted Draw
+                  const interruptedPlayerId = prev.currentTurnPlayerId;
+                  newPlayers = newPlayers.map(p => {
+                      if (p.id === interruptedPlayerId) {
+                           const poppedHand = [...p.hand];
+                           poppedHand.pop(); 
+                           return { ...p, hand: poppedHand };
+                      }
+                      return p;
+                  });
+
+                  // 2. Remove Discard
+                  newPlayers = newPlayers.map(p => ({
+                       ...p,
+                       discards: p.discards.filter(t => t.id !== targetTile!.id)
+                   }));
+
+                  // 3. Move 3 from hand + 1 discard
+                   newPlayers = newPlayers.map(p => {
+                      if (p.id === actor.id) {
+                           const handMatches = p.hand.filter(t => t.suit === targetTile!.suit && t.rank === targetTile!.rank);
+                           const keptHand = p.hand.filter(t => t.suit !== targetTile!.suit || t.rank !== targetTile!.rank);
+                           // Meld 4
+                           const meld = [...handMatches.slice(0,3), targetTile!];
+                           return {
+                               ...p,
+                               hand: [...keptHand, replacementTile], // Add replacement
+                               melds: [...p.melds, meld]
+                           };
+                      }
+                      return p;
+                   });
+
+                   targetTile = null; // Consumed
+
+              } else {
+                  // AN GANG (Dark) or BU GANG (Add)
+                  // Check existing melds for Bu Gang
+                  const isBuGang = actor.melds.some(m => m[0].suit === actor.hand[0]?.suit); // Simplification, need logic
+                  // Actually easier: User logic determined action. We just need to find the quad.
+                  
+                  newPlayers = newPlayers.map(p => {
+                      if (p.id === actor.id) {
+                          // Try Bu Gang: Check if I have a tile that matches a meld
+                          const buGangCandidate = p.hand.find(h => p.melds.some(m => m[0].suit === h.suit && m[0].rank === h.rank && m.length === 3));
+                          
+                          if (buGangCandidate) {
+                               const newHand = p.hand.filter(t => t.id !== buGangCandidate.id);
+                               const newMelds = p.melds.map(m => {
+                                   if (m[0].suit === buGangCandidate.suit && m[0].rank === buGangCandidate.rank) {
+                                       return [...m, buGangCandidate];
+                                   }
+                                   return m;
+                               });
+                               return { ...p, hand: [...newHand, replacementTile], melds: newMelds };
+                          }
+                          
+                          // Else An Gang: Find 4 matches
+                          // Find any rank with 4
+                          const counts: Record<string, number> = {};
+                          p.hand.forEach(t => counts[`${t.suit}-${t.rank}`] = (counts[`${t.suit}-${t.rank}`] || 0) + 1);
+                          const gangKey = Object.keys(counts).find(k => counts[k] === 4);
+                          
+                          if (gangKey) {
+                              const [s, r] = gangKey.split('-');
+                              const gangTiles = p.hand.filter(t => t.suit === s && t.rank === parseInt(r));
+                              const newHand = p.hand.filter(t => t.suit !== s || t.rank !== parseInt(r));
+                              return { ...p, hand: [...newHand, replacementTile], melds: [...p.melds, gangTiles] };
+                          }
+                          return p;
+                      }
+                      return p;
+                  });
+              }
+
+              const newState: GameState = {
+                  ...prev,
+                  players: newPlayers,
+                  lastDiscard: targetTile,
+                  currentTurnPlayerId: actor.id,
+                  remainingTiles: Math.max(0, prev.remainingTiles - 1)
+              };
+
+              broadcastState(newState);
+              return newState;
+          }
+
+          if (action.type === 'ACTION_HU') {
+              const winner = prev.players.find(p => p.id === action.playerId);
+              if (!winner) return prev;
+
+              const fan = calculateFan(winner.hand, winner.melds);
+              const points = Math.max(1, Math.pow(2, fan - 1) * 10);
+
+              const newPlayers = prev.players.map(p => {
+                  if (p.id === action.playerId) {
+                      return { ...p, isHu: true, score: p.score + points };
+                  }
+                  return p;
+              });
+
+              addScoreToast(`胡牌！${fan}番 +${points}`, 'positive');
+
+              // Bloody Battle: continue until all but one have Hu or tiles empty
+              const huCount = newPlayers.filter(p => p.isHu).length;
+              const shouldEnd = huCount >= newPlayers.length - 1 || prev.remainingTiles === 0;
+
+              // Advance turn to next non-Hu player if current player just Hu'd
+              let nextPlayerId = prev.currentTurnPlayerId;
+              if (action.playerId === prev.currentTurnPlayerId) {
+                  const currentIndex = newPlayers.findIndex(p => p.id === action.playerId);
+                  let nextIndex = (currentIndex + 1) % newPlayers.length;
+                  let safety = 0;
+                  while (newPlayers[nextIndex]?.isHu && safety < newPlayers.length) {
+                      nextIndex = (nextIndex + 1) % newPlayers.length;
+                      safety++;
+                  }
+                  nextPlayerId = newPlayers[nextIndex]?.id ?? '';
+              }
+
+              const newState: GameState = {
+                  ...prev,
+                  players: newPlayers,
+                  phase: shouldEnd ? 'GAME_OVER' : prev.phase,
+                  currentTurnPlayerId: nextPlayerId
+              };
+
+              broadcastState(newState);
+              return newState;
+          }
+
+          if (action.type === 'ACTION_RESTART') {
+              const deck = generateDeck();
+              let nextPlayers = [...prev.players].map(p => ({
+                  ...p,
+                  hand: deck.splice(0, 13),
+                  discards: [],
+                  melds: [],
+                  dingQue: null,
+                  isHu: false
+              }));
+
+              const host = nextPlayers.find(p => p.id === prev.myPlayerId);
+              if (host) host.hand = sortHand(host.hand, null);
+
+              const newState: GameState = {
+                  ...prev,
+                  phase: 'DINGQUE',
+                  remainingTiles: deck.length,
+                  players: nextPlayers,
+                  lastDiscard: null,
+                  currentTurnPlayerId: ''
+              };
+
+              broadcastState(newState);
+              return newState;
+          }
+
+          return prev;
+      });
+  };
+
+  // --- BOT AI ---
+    useEffect(() => {
+        const isHost = gameState.roomId === gameState.myPlayerId;
+        const hasBots = gameState.players.some(p => p.id.startsWith('bot-'));
+        if (!isHost || !hasBots) return;
+        if (gameState.phase !== 'PLAYING' && gameState.phase !== 'DINGQUE') return;
+
+    let timer: NodeJS.Timeout;
+
+    // AI Logic
+    const runBotLogic = () => {
+        // --- HUMAN BLOCKING CHECK ---
+        // If there is a discard on table, and human player can Peng/Gang/Hu it,
+        // and human hasn't skipped this specific discard yet,
+        // then PAUSE AI.
+        const humanPlayer = gameState.players.find(p => !p.id.startsWith('bot-'));
+        const lastDiscard = gameState.lastDiscard;
+        
+        if (lastDiscard && humanPlayer && lastDiscard.id !== skippedDiscardId) {
+             const canAction = 
+                 canPeng(humanPlayer.hand, lastDiscard) || 
+                 canGang(humanPlayer.hand, lastDiscard) ||
+                 canHu(humanPlayer.hand, humanPlayer.dingQue || 'WAN'); // TODO: Pass discard to canHu if logic supported (dian hu)
+             
+             if (canAction) {
+                 // Block AI until human decides
+                 return; 
+             }
+        }
+
+        // DINGQUE PHASE
+        if (gameState.phase === 'DINGQUE') {
+            const botToAct = gameState.players.find(p => p.id.startsWith('bot-') && p.dingQue === null);
+            if (botToAct) {
+                const suit = getRecommendedDingQue(botToAct.hand);
+                handleNetworkMessage({ type: 'ACTION_DINGQUE', playerId: botToAct.id, suit }, 'bot');
+            }
+            return;
+        }
+
+        // PLAYING PHASE
+        const currentPlayer = gameState.players.find(p => p.id === gameState.currentTurnPlayerId);
+        if (currentPlayer && currentPlayer.id.startsWith('bot-')) {
+            // Simple strategy: Discard dingque suit first, then random
+            let tileToDiscard = currentPlayer.hand.find(t => t.suit === currentPlayer.dingQue);
+            if (!tileToDiscard) {
+                const validTiles = currentPlayer.hand.filter(t => t.suit !== currentPlayer.dingQue);
+                if (validTiles.length > 0) {
+                    // Pick random to be less predictable, or just last drawn
+                    tileToDiscard = validTiles[Math.floor(Math.random() * validTiles.length)];
+                } else {
+                    tileToDiscard = currentPlayer.hand[0]; 
+                }
+            }
+
+            if (tileToDiscard) {
+                handleNetworkMessage({ 
+                    type: 'ACTION_DISCARD', 
+                    playerId: currentPlayer.id, 
+                    tileId: tileToDiscard.id 
+                }, 'bot');
+            }
+        }
+    };
+
+    // Add delay for realism
+    timer = setTimeout(runBotLogic, 1000);
+
+    return () => clearTimeout(timer);
+    }, [gameState.phase, gameState.currentTurnPlayerId, gameState.players, gameState.isMultiplayer, gameState.roomId, gameState.myPlayerId, skippedDiscardId]);
+
+  const broadcastState = (state: GameState) => {
+      if (!state.isMultiplayer) return;
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+      const message: SocketMessage = { roomId: state.roomId, action: { type: 'STATE_UPDATE', state } };
+      wsRef.current.send(JSON.stringify(message));
+  };
+
+  const sendAction = (action: NetworkAction) => {
+      if (gameState.roomId === gameState.myPlayerId) {
+          // I am host, handle locally
+          handleNetworkMessage(action, gameState.myPlayerId);
+      } else {
+          // Send to host
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+              const message: SocketMessage = { roomId: gameState.roomId, action };
+              wsRef.current.send(JSON.stringify(message));
+          }
+      }
+  };
+
+  // --- GAMEPLAY ACTIONS ---
+
+  const createRoom = () => {
+      if (!wsReady) {
+          addScoreToast('正在连接服务器，请稍候...', 'neutral');
+          return;
+      }
+      if (!gameState.myPlayerId) {
+          addScoreToast('正在生成玩家ID，请稍候...', 'neutral');
+          return;
+      }
+      const myId = gameState.myPlayerId;
+      const hostPlayer: Player = {
+          id: myId,
+          name: playerName.trim() || '房主',
+          position: 'bottom',
+          hand: [],
+          discards: [],
+          melds: [],
+          score: 10000,
+          dingQue: null,
+          isHu: false,
+          avatar: '🦁'
+      };
+
+      const roomId = myId;
+      roomIdRef.current = roomId;
+      setGameState(prev => ({
+          ...prev,
+          roomId,
+          isMultiplayer: true,
+          phase: 'LOBBY',
+          players: [hostPlayer]
+      }));
+
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          const message: SocketMessage = { roomId, action: { type: 'JOIN', player: hostPlayer } };
+          wsRef.current.send(JSON.stringify(message));
+      }
+  };
+
+  const joinRoom = () => {
+      if (!wsReady) {
+          addScoreToast('正在连接服务器，请稍候...', 'neutral');
+          return;
+      }
+      if (!gameState.myPlayerId) {
+          addScoreToast('正在生成玩家ID，请稍候...', 'neutral');
+          return;
+      }
+      if (!lobbyInput) return;
+      const roomId = lobbyInput.trim();
+      roomIdRef.current = roomId;
+
+      setGameState(prev => ({
+          ...prev,
+          roomId,
+          isMultiplayer: true,
+          phase: 'LOBBY'
+      }));
+
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          const myPlayer: Player = {
+              id: gameState.myPlayerId,
+              name: playerName.trim() || `玩家 ${gameState.myPlayerId.slice(-4)}`,
+              position: 'bottom',
+              hand: [],
+              discards: [],
+              melds: [],
+              score: 10000,
+              dingQue: null,
+              isHu: false,
+              avatar: '🦊'
+          };
+          const message: SocketMessage = { roomId, action: { type: 'JOIN', player: myPlayer } };
+          wsRef.current.send(JSON.stringify(message));
+      }
+  };
+
+  const addBotPlayer = () => {
+      if (gameState.roomId !== gameState.myPlayerId) return; // Only host
+      if (gameState.players.length >= 4) return;
+
+      const existingIds = new Set(gameState.players.map(p => p.id));
+      let botIndex = 1;
+      while (existingIds.has(`bot-${botIndex}`)) botIndex++;
+
+      const botPlayer: Player = {
+          id: `bot-${botIndex}`,
+          name: `人机 ${botIndex}`,
+          position: 'bottom',
+          hand: [],
+          discards: [],
+          melds: [],
+          score: 10000,
+          dingQue: null,
+          isHu: false,
+          avatar: ['🤖', '👾', '👽', '🧠'][botIndex % 4]
+      };
+
+      const newState: GameState = {
+          ...gameState,
+          players: [...gameState.players, botPlayer]
+      };
+
+      setGameState(newState);
+      broadcastState(newState);
+  };
+
+  const startBotGame = () => {
+      if (!gameState.myPlayerId) return;
+
+      const myId = gameState.myPlayerId;
+      const roomId = myId; // "Host" logic uses roomId === myPlayerId
+      roomIdRef.current = roomId;
+
+      const humanPlayer: Player = {
+          id: myId,
+          name: '你',
+          position: 'bottom',
+          hand: [],
+          discards: [],
+          melds: [],
+          score: 10000,
+          dingQue: null,
+          isHu: false,
+          avatar: '🦁'
+      };
+
+      const bots: Player[] = [1, 2, 3].map(i => ({
+          id: `bot-${i}`,
+          name: `人机 ${i}`,
+          position: 'bottom', // Ignored, recalculated on render
+          hand: [],
+          discards: [],
+          melds: [],
+          score: 10000,
+          dingQue: null,
+          isHu: false,
+          avatar: ['🤖', '👾', '👽'][i - 1]
+      }));
+
+      // Deal tiles
+      const deck = generateDeck();
+      const allPlayers = [humanPlayer, ...bots].map(p => ({
+          ...p,
+          hand: sortHand(deck.splice(0, 13), null)
+      }));
+
+      setGameState(prev => ({
+          ...prev,
+          roomId,
+          isMultiplayer: false,
+          phase: 'DINGQUE',
+          players: allPlayers,
+          remainingTiles: deck.length,
+          currentTurnPlayerId: '' 
+      }));
+  };
+
+  const startGame = () => {
+      // Only host can start
+      const deck = generateDeck();
+      let tempPlayers = [...gameState.players];
+
+      // Deal 13
+      tempPlayers = tempPlayers.map(p => ({
+          ...p,
+          hand: deck.splice(0, 13),
+          dingQue: null,
+          discards: [],
+          isHu: false
+      }));
+
+      // Sort Host hand
+      const host = tempPlayers.find(p => p.id === gameState.myPlayerId);
+      if(host) host.hand = sortHand(host.hand, null);
+
+      const newState: GameState = {
+          ...gameState,
+          phase: 'DINGQUE',
+          remainingTiles: deck.length,
+          players: tempPlayers
+      };
+      
+      setGameState(newState);
+      broadcastState(newState);
+  };
+
+  const handleDingQue = (suit: Suit) => {
+      sendAction({ type: 'ACTION_DINGQUE', playerId: gameState.myPlayerId, suit });
+  };
+
+  const handlePeng = () => {
+    sendAction({ type: 'ACTION_PENG', playerId: gameState.myPlayerId });
+  };
+
+  const handleGang = () => {
+    sendAction({ type: 'ACTION_GANG', playerId: gameState.myPlayerId });
+  };
+
+    const handleHu = () => {
+            sendAction({ type: 'ACTION_HU', playerId: gameState.myPlayerId });
+    };
+
+  const handleDiscard = (tile: TileData) => {
+      // Validation
+      const me = gameState.players.find(p => p.id === gameState.myPlayerId);
+      if (me?.dingQue && me.hand.some(t => t.suit === me.dingQue) && tile.suit !== me.dingQue) {
+           addScoreToast('Must discard DingQue suit!', 'negative');
+           return;
+      }
+
+      setSelectedTileId(null);
+      sendAction({ type: 'ACTION_DISCARD', playerId: gameState.myPlayerId, tileId: tile.id });
+  };
+
+  const handleSkip = () => {
+      if (gameState.lastDiscard) {
+          setSkippedDiscardId(gameState.lastDiscard.id);
+      }
+  };
+
+  const addScoreToast = (text: string, type: 'positive'|'negative'|'neutral') => {
+      const id = Date.now();
+      setScoreEvents(prev => [...prev, { id, text, type }]);
+      setTimeout(() => setScoreEvents(prev => prev.filter(e => e.id !== id)), 2000);
+  };
+
+  // --- RENDER HELPERS ---
+
+  // Coordinate mapper: Rotates the view so "Me" is always at bottom
+  const getRelativePosition = (playerId: string): 'bottom' | 'right' | 'top' | 'left' => {
+      const myIndex = gameState.players.findIndex(p => p.id === gameState.myPlayerId);
+      if (myIndex === -1) return 'bottom'; // Spectator or not joined
+      
+      const targetIndex = gameState.players.findIndex(p => p.id === playerId);
+      const total = gameState.players.length;
+      
+      // If 4 players
+      const diff = (targetIndex - myIndex + total) % total;
+      if (diff === 0) return 'bottom';
+      if (diff === 1) return 'right';
+      if (diff === 2) return 'top';
+      return 'left';
+  };
+
+  const renderLobby = () => (
+      <div className="flex flex-col items-center justify-center min-h-screen z-50 relative">
+          <button
+              onClick={() => setShowRules(true)}
+              className="fixed top-4 right-4 z-[60] bg-emerald-700/90 hover:bg-emerald-600 text-white px-4 py-2 rounded-full shadow-lg border border-emerald-900"
+          >
+              游戏规则
+          </button>
+
+          {showRules && (
+              <div className="fixed inset-0 z-[70] bg-black/70 flex items-center justify-center">
+                  <div className="bg-white text-gray-800 max-w-2xl w-[90%] p-6 rounded-2xl shadow-2xl">
+                      <div className="flex items-center justify-between mb-4">
+                          <h2 className="text-2xl font-black text-emerald-700">血战到底规则简介</h2>
+                          <button onClick={() => setShowRules(false)} className="text-gray-500 hover:text-gray-800">✕</button>
+                      </div>
+                                            <ul className="space-y-2 text-sm leading-6">
+                                                    <li>• 人数与发牌：4人局，每人13张，庄家先摸一张成为14张后打出。</li>
+                                                    <li>• 定缺：开局必须选择缺一门（万/条/筒之一）。手中仍有定缺花色时不能胡牌。</li>
+                                                    <li>• 出牌顺序：轮到自己摸牌，摸到的牌置于最右侧；可选择打出任意一张，若不打出摸到的牌则并入手牌。</li>
+                                                    <li>• 胡牌牌型：标准胡型为4副面子（顺子或刻子/杠）+1对将；支持七对。</li>
+                                                    <li>• 碰牌：他人弃牌时，若你手中有两张相同牌可碰，碰后由你出牌。</li>
+                                                    <li>• 杠牌：
+                                                        <div className="pl-3">
+                                                            <div>明杠：他人弃牌时你有三张相同牌可明杠。</div>
+                                                            <div>暗杠：自己手中四张相同牌可暗杠。</div>
+                                                            <div>补杠：已碰的刻子再摸到第四张可补杠。</div>
+                                                        </div>
+                                                    </li>
+                                                    <li>• 番数与计分：基础1番，七对/碰碰胡/清一色等会加番；番数越高得分越多。</li>
+                                                    <li>• 过牌：他人弃牌可碰/杠时可选择“过”，过后该弃牌不再可用。</li>
+                                            </ul>
+                      <div className="mt-6 text-right">
+                          <button onClick={() => setShowRules(false)} className="bg-emerald-600 text-white px-4 py-2 rounded-lg">知道了</button>
+                      </div>
+                  </div>
+              </div>
+          )}
+
+          <div className="bg-[#0a3a3a] p-8 rounded-2xl shadow-2xl border border-emerald-600/30 w-full max-w-md text-center">
+              <h1 className="text-4xl font-black text-emerald-100 mb-2 tracking-widest">血战到底</h1>
+              <p className="text-emerald-400 mb-8 font-serif">四川血战到底</p>
+              
+              {gameState.roomId ? (
+                   // Waiting Room
+                   <div>
+                       <div className="mb-6 p-4 bg-black/20 rounded-lg">
+                           <p className="text-gray-400 text-sm mb-1">房间号（分享给朋友）</p>
+                           <div className="flex items-center justify-center gap-2 text-yellow-400 font-mono text-xl font-bold bg-black/40 p-2 rounded">
+                               {gameState.roomId} 
+                               <button onClick={() => navigator.clipboard.writeText(gameState.roomId)} className="hover:text-white"><Copy size={16}/></button>
+                           </div>
+                       </div>
+                       
+                       <div className="space-y-2 mb-8">
+                           {gameState.players.map(p => (
+                               <div key={p.id} className="flex items-center gap-2 p-2 bg-emerald-800/50 rounded">
+                                   <span className="text-2xl">{p.avatar}</span>
+                                   <span className="text-white">{p.name} {p.id === gameState.myPlayerId ? '(我)' : ''}</span>
+                               </div>
+                           ))}
+                           {gameState.players.length < 4 && (
+                               <div className="text-gray-500 italic py-2 animate-pulse">等待玩家加入...</div>
+                           )}
+                       </div>
+
+                       {gameState.roomId === gameState.myPlayerId && gameState.players.length < 4 && (
+                           <button onClick={addBotPlayer} className="w-full mb-4 bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 rounded-lg shadow border-b-4 border-indigo-800">
+                               添加人机
+                           </button>
+                       )}
+
+                       {gameState.roomId === gameState.myPlayerId && gameState.players.length >= 2 && (
+                           <button onClick={startGame} className="w-full bg-gradient-to-r from-yellow-500 to-orange-600 text-white font-bold py-3 rounded-lg shadow-lg hover:scale-105 transition">
+                               开始游戏
+                           </button>
+                       )}
+                   </div>
+              ) : (
+                  // Main Menu
+                                    <div className="space-y-4">
+                      <button
+                            onClick={startBotGame}
+                            className="w-full flex items-center justify-center gap-2 font-bold py-3 rounded-lg transition bg-indigo-600 hover:bg-indigo-500 text-white border-b-4 border-indigo-800"
+                        >
+                            <Bot /> 人机对战
+                        </button>
+
+                                            <button
+                                                onClick={createRoom}
+                                                disabled={!wsReady}
+                                                className={`w-full flex items-center justify-center gap-2 font-bold py-3 rounded-lg transition border-b-4 ${wsReady ? 'bg-emerald-700 hover:bg-emerald-600 text-white border-emerald-900' : 'bg-gray-600 text-gray-300 border-gray-800 cursor-not-allowed'}`}
+                                            >
+                          <Users /> 创建房间（房主）
+                      </button>
+                      
+                      <div className="relative">
+                          <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-600"></div></div>
+                          <div className="relative flex justify-center text-sm"><span className="px-2 bg-[#0a3a3a] text-gray-400">或</span></div>
+                      </div>
+
+                                            <div className="flex gap-2">
+                                                    <input 
+                                                        type="text" 
+                                                        placeholder="你的昵称"
+                                                        maxLength={12}
+                                                        className="flex-1 bg-black/30 border border-emerald-600/50 rounded-lg px-4 text-white focus:outline-none focus:border-yellow-400"
+                                                        value={playerName}
+                                                        onChange={e => setPlayerName(e.target.value)}
+                                                    />
+                                            </div>
+
+                                            <div className="flex gap-2">
+                          <input 
+                            type="text" 
+                            placeholder="输入房间号" 
+                            className="flex-1 bg-black/30 border border-emerald-600/50 rounded-lg px-4 text-white focus:outline-none focus:border-yellow-400"
+                            value={lobbyInput}
+                            onChange={e => setLobbyInput(e.target.value)}
+                          />
+                                                    <button
+                                                        onClick={joinRoom}
+                                                        disabled={!wsReady}
+                                                        className={`${wsReady ? 'bg-blue-700 hover:bg-blue-600 text-white' : 'bg-gray-600 text-gray-300 cursor-not-allowed'} px-4 rounded-lg font-bold`}
+                                                    >
+                              <LogIn size={20} />
+                          </button>
+                      </div>
+                  </div>
+              )}
+          </div>
+      </div>
+  );
+
+  const renderGame = () => {
+    const myPlayer = gameState.players.find(p => p.id === gameState.myPlayerId);
+    if (!myPlayer) return <div>Error: Player not found</div>;
+
+    const playersByPos = {
+        bottom: myPlayer,
+        right: gameState.players.find(p => getRelativePosition(p.id) === 'right'),
+        top: gameState.players.find(p => getRelativePosition(p.id) === 'top'),
+        left: gameState.players.find(p => getRelativePosition(p.id) === 'left'),
+    };
+
+    return (
+        <div className="relative w-screen h-screen overflow-hidden flex items-center justify-center select-none">
+            <button
+                onClick={() => setShowRules(true)}
+                className="fixed top-4 right-4 z-[60] bg-emerald-700/90 hover:bg-emerald-600 text-white px-4 py-2 rounded-full shadow-lg border border-emerald-900"
+            >
+                游戏规则
+            </button>
+
+            {showRules && (
+                <div className="fixed inset-0 z-[70] bg-black/70 flex items-center justify-center">
+                    <div className="bg-white text-gray-800 max-w-2xl w-[90%] p-6 rounded-2xl shadow-2xl">
+                        <div className="flex items-center justify-between mb-4">
+                            <h2 className="text-2xl font-black text-emerald-700">血战到底规则简介</h2>
+                            <button onClick={() => setShowRules(false)} className="text-gray-500 hover:text-gray-800">✕</button>
+                        </div>
+                                                <ul className="space-y-2 text-sm leading-6">
+                                                        <li>• 人数与发牌：4人局，每人13张，庄家先摸一张成为14张后打出。</li>
+                                                        <li>• 定缺：开局必须选择缺一门（万/条/筒之一）。手中仍有定缺花色时不能胡牌。</li>
+                                                        <li>• 出牌顺序：轮到自己摸牌，摸到的牌置于最右侧；可选择打出任意一张，若不打出摸到的牌则并入手牌。</li>
+                                                        <li>• 胡牌牌型：标准胡型为4副面子（顺子或刻子/杠）+1对将；支持七对。</li>
+                                                        <li>• 碰牌：他人弃牌时，若你手中有两张相同牌可碰，碰后由你出牌。</li>
+                                                        <li>• 杠牌：
+                                                            <div className="pl-3">
+                                                                <div>明杠：他人弃牌时你有三张相同牌可明杠。</div>
+                                                                <div>暗杠：自己手中四张相同牌可暗杠。</div>
+                                                                <div>补杠：已碰的刻子再摸到第四张可补杠。</div>
+                                                            </div>
+                                                        </li>
+                                                        <li>• 番数与计分：基础1番，七对/碰碰胡/清一色等会加番；番数越高得分越多。</li>
+                                                        <li>• 过牌：他人弃牌可碰/杠时可选择“过”，过后该弃牌不再可用。</li>
+                                                </ul>
+                        <div className="mt-6 text-right">
+                            <button onClick={() => setShowRules(false)} className="bg-emerald-600 text-white px-4 py-2 rounded-lg">知道了</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+            
+            {/* Table Surface */}
+            <div className="relative w-[96vw] h-[92vh] rounded-[4rem] bg-[#1a5c5c] shadow-[0_0_50px_rgba(0,0,0,0.8)] border-[12px] border-[#0a2a2a] flex items-center justify-center perspective-table">
+                {/* Felt Texture Overlay */}
+                <div className="absolute inset-0 rounded-[3.5rem] opacity-20 bg-[url('https://www.transparenttextures.com/patterns/felt.png')] pointer-events-none"></div>
+
+                {/* Center Info */}
+                <TableCenter remainingTiles={gameState.remainingTiles} phase={gameState.phase} />
+                <ScoreToast events={scoreEvents} />
+
+                {/* --- PLAYERS --- */}
+
+                {/* TOP PLAYER */}
+                {playersByPos.top && (
+                    <div className="absolute top-4 left-1/2 -translate-x-1/2 flex flex-col items-center">
+                        <div className="flex gap-8 items-end">
+                            {/* Melds */}
+                            <div className="flex gap-2">
+                                {playersByPos.top.melds.map((meld, mi) => (
+                                    <div key={mi} className="flex gap-[1px] bg-black/20 p-1 rounded">
+                                        {meld.map((t, ti) => <Tile key={ti} tile={t} size="sm" isFaceUp={true} />)}
+                                    </div>
+                                ))}
+                            </div>
+                            {/* Hand: Face down */}
+                            <div className="flex gap-[2px]">
+                                {playersByPos.top.hand.map((t, i) => (
+                                    <Tile key={i} size="sm" isFaceUp={false} className="shadow-md" />
+                                ))}
+                            </div>
+                        </div>
+                        {/* Top Discards Grid */}
+                        <div className="mt-4 grid grid-cols-10 gap-1 opacity-90">
+                            {playersByPos.top.discards.map((tile, i) => (
+                                <Tile key={i} tile={tile} size="sm" is3D={false} />
+                            ))}
+                        </div>
+                        <PlayerAvatar 
+                            player={playersByPos.top} 
+                            isCurrentTurn={gameState.currentTurnPlayerId === playersByPos.top.id}
+                            className="absolute -top-2 -right-48 flex-row-reverse"
+                        />
+                    </div>
+                )}
+
+                {/* LEFT PLAYER */}
+                {playersByPos.left && (
+                    <div className="absolute left-8 top-1/2 -translate-y-1/2 flex flex-row items-center">
+                        {/* Left Melds */}
+                        <div className="flex flex-col gap-2 -mt-12 mr-4">
+                            {playersByPos.left.melds.map((meld, mi) => (
+                                <div key={mi} className="flex gap-[2px] bg-black/20 p-1 rounded">
+                                    {meld.map((t, ti) => (
+                                        <Tile key={ti} tile={t} size="sm" isFaceUp={true} rotation={-90} is3D={false} />
+                                    ))}
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="flex flex-col gap-[4px] -mt-12">
+                            {playersByPos.left.hand.map((t, i) => (
+                                <div key={i} className="w-8 h-5 bg-emerald-800 rounded-[2px] border border-emerald-900 shadow-md relative side-tile-shadow-left">
+                                     <div className="absolute top-[-2px] left-0 w-full h-[2px] bg-emerald-600"></div>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="ml-8 grid grid-cols-6 gap-1 rotate-90 opacity-90">
+                             {playersByPos.left.discards.map((tile, i) => (
+                                <Tile key={i} tile={tile} size="sm" is3D={false} rotation={-90} />
+                            ))}
+                        </div>
+                        <PlayerAvatar 
+                            player={playersByPos.left} 
+                            isCurrentTurn={gameState.currentTurnPlayerId === playersByPos.left.id}
+                            className="absolute -top-32 left-0"
+                        />
+                    </div>
+                )}
+
+                {/* RIGHT PLAYER */}
+                {playersByPos.right && (
+                    <div className="absolute right-8 top-1/2 -translate-y-1/2 flex flex-row-reverse items-center">
+                        {/* Right Melds */}
+                        <div className="flex flex-col gap-2 -mt-12 ml-4">
+                            {playersByPos.right.melds.map((meld, mi) => (
+                                <div key={mi} className="flex gap-[2px] bg-black/20 p-1 rounded">
+                                    {meld.map((t, ti) => (
+                                        <Tile key={ti} tile={t} size="sm" isFaceUp={true} rotation={90} is3D={false} />
+                                    ))}
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="flex flex-col gap-[4px] -mt-12">
+                            {playersByPos.right.hand.map((t, i) => (
+                                <div key={i} className="w-8 h-5 bg-emerald-800 rounded-[2px] border border-emerald-900 shadow-md relative side-tile-shadow-right">
+                                    <div className="absolute top-[-2px] left-0 w-full h-[2px] bg-emerald-600"></div>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="mr-8 grid grid-cols-6 gap-1 -rotate-90 opacity-90">
+                             {playersByPos.right.discards.map((tile, i) => (
+                                <Tile key={i} tile={tile} size="sm" is3D={false} rotation={90} />
+                            ))}
+                        </div>
+                        <PlayerAvatar 
+                            player={playersByPos.right} 
+                            isCurrentTurn={gameState.currentTurnPlayerId === playersByPos.right.id}
+                            className="absolute -top-32 right-0 flex-row-reverse"
+                        />
+                    </div>
+                )}
+
+                {/* BOTTOM PLAYER (ME) */}
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex flex-col items-center w-full max-w-4xl">
+                     
+                     {/* Discards */}
+                     <div className="mb-6 grid grid-cols-10 gap-1">
+                        {myPlayer.discards.map((tile, i) => (
+                             <Tile key={i} tile={tile} size="sm" is3D={false} />
+                        ))}
+                     </div>
+
+                     {/* Hand */}
+                     <div className="flex items-end justify-center gap-[2px] px-8 pb-4">
+                        {/* Melds (Left side of hand) */}
+                        <div className="flex gap-4 mr-8">
+                             {myPlayer.melds.map((meld, mi) => (
+                                <div key={mi} className="flex gap-[1px]">
+                                    {meld.map((t, ti) => <Tile key={ti} tile={t} size="lg" isFaceUp={true} />)}
+                                </div>
+                             ))}
+                        </div>
+
+                        {myPlayer.hand.map((tile, index) => {
+                             const isDingQue = myPlayer.dingQue === tile.suit;
+                             // Separate the 14th tile if it's the new draw
+                             const isNewDraw = index === myPlayer.hand.length - 1 && myPlayer.hand.length % 3 === 2;
+                             
+                             return (
+                                 <div key={tile.id} className={`${isNewDraw ? 'ml-6' : ''}`}>
+                                     <Tile 
+                                         tile={tile} 
+                                         size="xl"
+                                         dimmed={isDingQue}
+                                         selected={selectedTileId === tile.id}
+                                         onClick={() => {
+                                             if (gameState.phase !== 'PLAYING' || gameState.currentTurnPlayerId !== gameState.myPlayerId) return;
+                                             if (selectedTileId === tile.id) handleDiscard(tile);
+                                             else setSelectedTileId(tile.id);
+                                         }}
+                                     />
+                                 </div>
+                             );
+                        })}
+                     </div>
+
+                     {/* Actions HUD */}
+                     {gameState.phase === 'PLAYING' && (
+                         <div className="absolute bottom-40 right-10 flex flex-col gap-2">
+                             {/* Claim Hint */}
+                             {(gameState.currentTurnPlayerId !== myPlayer.id && gameState.lastDiscard && (canPeng(myPlayer.hand, gameState.lastDiscard) || canGang(myPlayer.hand, gameState.lastDiscard))) && (
+                                 <div className="bg-black/40 text-white text-sm px-3 py-2 rounded-lg flex items-center gap-2 border border-white/20">
+                                     <span className="font-semibold">可碰/杠：</span>
+                                     <Tile tile={gameState.lastDiscard} size="sm" is3D={false} highlight />
+                                 </div>
+                             )}
+                             {/* HU Button */}
+                             {gameState.currentTurnPlayerId === myPlayer.id && canHu(myPlayer.hand, myPlayer.dingQue || 'WAN') && (
+                                 <button onClick={handleHu} className="bg-red-600 text-white font-black text-2xl w-20 h-20 rounded-full shadow-lg border-4 border-red-800 animate-bounce">
+                                     胡
+                                 </button>
+                             )}
+
+                             {/* GANG Button */}
+                             {/* Check An Gang / Bu Gang (My turn) OR Ming Gang (Others turn + discard) */}
+                             {(
+                                 (gameState.currentTurnPlayerId === myPlayer.id && canGang(myPlayer.hand)) ||
+                                 (gameState.currentTurnPlayerId !== myPlayer.id && gameState.lastDiscard && canGang(myPlayer.hand, gameState.lastDiscard))
+                             ) && (
+                                 <button onClick={handleGang} className="bg-blue-600 text-white font-black text-xl w-16 h-16 rounded-full shadow-lg border-4 border-blue-800">
+                                     杠
+                                 </button>
+                             )}
+
+                             {/* PENG Button */}
+                             {/* Check Ming Peng (Others turn + discard) */}
+                             {(
+                                 gameState.currentTurnPlayerId !== myPlayer.id && 
+                                 gameState.lastDiscard && 
+                                 canPeng(myPlayer.hand, gameState.lastDiscard)
+                             ) && (
+                                 <button onClick={handlePeng} className="bg-emerald-600 text-white font-black text-xl w-16 h-16 rounded-full shadow-lg border-4 border-emerald-800">
+                                     碰
+                                 </button>
+                             )}
+
+                             {/* PASS Button */}
+                             {/* Show if any interaction is possible but it's not my turn (i.e. strictly responding to discard) */}
+                             {(
+                                 gameState.currentTurnPlayerId !== myPlayer.id && 
+                                 gameState.lastDiscard && 
+                                 gameState.lastDiscard.id !== skippedDiscardId &&
+                                 (
+                                     canPeng(myPlayer.hand, gameState.lastDiscard) ||
+                                     canGang(myPlayer.hand, gameState.lastDiscard)
+                                     // canHu(...) 
+                                 )
+                             ) && (
+                                 <button onClick={handleSkip} className="bg-gray-500 text-white font-bold text-lg w-16 h-16 rounded-full shadow-lg border-4 border-gray-700 hover:bg-gray-400">
+                                     过
+                                 </button>
+                             )}
+                         </div>
+                     )}
+                </div>
+
+                <PlayerAvatar 
+                    player={myPlayer} 
+                    isCurrentTurn={gameState.currentTurnPlayerId === myPlayer.id}
+                    className="absolute bottom-[30px] left-[30px]" // Moved to bottom-left corner of table
+                />
+            </div>
+
+            {/* DingQue Overlay */}
+            {gameState.phase === 'DINGQUE' && (
+                 <DingQuePanel onSelect={handleDingQue} recommended={getRecommendedDingQue(myPlayer.hand)} />
+            )}
+             
+            {/* Game Over */}
+            {gameState.phase === 'GAME_OVER' && (
+                <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-50 text-white">
+                    <h1 className="text-5xl font-bold mb-8 text-yellow-400">本局结束</h1>
+                    {gameState.isMultiplayer ? (
+                        gameState.roomId === gameState.myPlayerId ? (
+                            <button onClick={() => sendAction({ type: 'ACTION_RESTART' })} className="bg-emerald-600 px-6 py-2 rounded">
+                                再来一局
+                            </button>
+                        ) : (
+                            <div className="text-gray-300 text-lg">等待房主开始下一局...</div>
+                        )
+                    ) : (
+                        <div className="flex gap-4">
+                            <button onClick={() => sendAction({ type: 'ACTION_RESTART' })} className="bg-emerald-600 px-6 py-2 rounded">
+                                再来一局
+                            </button>
+                            <button onClick={() => window.location.reload()} className="bg-gray-600 px-6 py-2 rounded">
+                                返回大厅
+                            </button>
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+  };
+
+  return gameState.phase === 'LOBBY' ? renderLobby() : renderGame();
+}
+
+export default App;

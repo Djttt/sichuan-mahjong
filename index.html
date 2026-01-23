@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sichuan Mahjong</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;700;900&display=swap');
+      body {
+        font-family: 'Noto Serif SC', serif;
+        overflow: hidden;
+        background-color: #0f3d3e; /* Dark Teal base */
+        background-image: radial-gradient(circle at center, #1a5c5c 0%, #0f3d3e 100%);
+      }
+      .perspective-table {
+        perspective: 1200px;
+      }
+      .tile-shadow {
+        box-shadow: 1px 2px 4px rgba(0, 0, 0, 0.5), inset 0 -3px 0 rgba(0,0,0,0.15);
+      }
+      /* Sidebar tile vertical stack effect */
+      .side-tile-shadow-left {
+        box-shadow: 2px 1px 4px rgba(0,0,0,0.4);
+      }
+      .side-tile-shadow-right {
+        box-shadow: -2px 1px 4px rgba(0,0,0,0.4);
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "react": "https://esm.sh/react@^19.2.3",
+    "lucide-react": "https://esm.sh/lucide-react@^0.562.0"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+  <body>
+    <div id="root"></div>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>
