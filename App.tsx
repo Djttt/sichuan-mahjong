@@ -7,7 +7,10 @@ import { TableCenter } from './components/TableCenter';
 import { PlayerAvatar } from './components/PlayerAvatar';
 import { getRecommendedDingQue, canHu, canGang, canPeng, calculateFan, hasBuGang } from './services/gameLogic';
 import { ScoreToast } from './components/ScoreToast';
-import { Copy, Users, Play, LogIn, ArrowLeft, Bot } from 'lucide-react';
+import { Copy, Users, Play, LogIn, ArrowLeft, Bot, Trophy, User } from 'lucide-react';
+import { io, Socket } from 'socket.io-client';
+import { Auth } from './components/Auth';
+import { Leaderboard } from './components/Leaderboard';
 
 const USER_ID_PREFIX = 'player-';
 
@@ -32,47 +35,56 @@ function App() {
     const [playerName, setPlayerName] = useState('');
     const [skippedDiscardId, setSkippedDiscardId] = useState<string | null>(null);
 
-    // WebSocket Ref
-    const wsRef = useRef<WebSocket | null>(null);
+    // Auth & Leaderboard State
+    const [user, setUser] = useState<{ id: number, username: string } | null>(null);
+    const [showAuth, setShowAuth] = useState(false);
+    const [showLeaderboard, setShowLeaderboard] = useState(false);
+
+    // Socket Ref
+    const socketRef = useRef<Socket | null>(null);
     const roomIdRef = useRef<string>('');
 
     // --- INITIALIZATION ---
     useEffect(() => {
-        // Generate a random ID for this session (used as player id)
+        // Generate a random ID for this session (used as player id, or override with user.id later)
         const myId = `${USER_ID_PREFIX}${Math.floor(Math.random() * 10000)}`;
         setGameState(prev => ({ ...prev, myPlayerId: myId }));
 
-        const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-        const wsUrl = `${protocol}://${window.location.hostname}:6001/ws`;
-        const ws = new WebSocket(wsUrl);
-        wsRef.current = ws;
+        // Socket.IO Connection
+        const socket = io(`http://${window.location.hostname}:6001`);
+        socketRef.current = socket;
 
-        ws.onopen = () => {
+        socket.on('connect', () => {
+            console.log('Connected to server');
             setWsReady(true);
-        };
+        });
 
-        ws.onclose = () => {
+        socket.on('disconnect', () => {
+            console.log('Disconnected');
             setWsReady(false);
-        };
+        });
 
-        ws.onerror = (err) => {
-            console.error(err);
+        socket.on('connect_error', (err) => {
+            console.error('Connection error:', err);
             setWsReady(false);
-            addScoreToast('连接服务器失败，请刷新或检查网络。', 'negative');
-        };
+            // Don't show toast on every retry, unnecessary spam
+        });
 
-        ws.onmessage = (event) => {
-            try {
-                const message = JSON.parse(event.data) as SocketMessage;
-                if (!message.roomId || message.roomId !== roomIdRef.current) return;
-                handleNetworkMessage(message.action, 'server');
-            } catch (e) {
-                console.error('Invalid server message', e);
-            }
-        };
+        socket.on('game_action', (action: any) => {
+            // Check room ID alignment if included in payload, mostly handled by server rooms
+            if (action.roomId && action.roomId !== roomIdRef.current) return;
+            handleNetworkMessage(action, 'server');
+        });
+
+        socket.on('game_state_sync', (data: any) => {
+            if (data.roomId && data.roomId !== roomIdRef.current) return;
+            // If payload is wrapped or direct
+            const state = data.state || data;
+            handleNetworkMessage({ type: 'STATE_UPDATE', state }, 'server');
+        });
 
         return () => {
-            ws.close();
+            socket.disconnect();
         };
     }, []);
 
@@ -544,9 +556,10 @@ function App() {
 
     const broadcastState = (state: GameState) => {
         if (!state.isMultiplayer) return;
-        if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-        const message: SocketMessage = { roomId: state.roomId, action: { type: 'STATE_UPDATE', state } };
-        wsRef.current.send(JSON.stringify(message));
+        if (!socketRef.current) return;
+        // Host broadcasts state
+        const payload = { roomId: state.roomId, state };
+        socketRef.current.emit('game_state_sync', payload);
     };
 
     const sendAction = (action: NetworkAction) => {
@@ -555,9 +568,9 @@ function App() {
             handleNetworkMessage(action, gameState.myPlayerId);
         } else {
             // Send to host
-            if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                const message: SocketMessage = { roomId: gameState.roomId, action };
-                wsRef.current.send(JSON.stringify(message));
+            if (socketRef.current) {
+                const payload = { roomId: gameState.roomId, ...action };
+                socketRef.current.emit('game_action', payload);
             }
         }
     };
@@ -576,7 +589,7 @@ function App() {
         const myId = gameState.myPlayerId;
         const hostPlayer: Player = {
             id: myId,
-            name: playerName.trim() || '房主',
+            name: user ? user.username : (playerName.trim() || '房主'),
             position: 'bottom',
             hand: [],
             discards: [],
@@ -597,9 +610,9 @@ function App() {
             players: [hostPlayer]
         }));
 
-        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-            const message: SocketMessage = { roomId, action: { type: 'JOIN', player: hostPlayer } };
-            wsRef.current.send(JSON.stringify(message));
+        if (socketRef.current) {
+            socketRef.current.emit('join_game', { roomId });
+            // Host is first player, logic handles it locally
         }
     };
 
@@ -623,10 +636,12 @@ function App() {
             phase: 'LOBBY'
         }));
 
-        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        if (socketRef.current) {
+            socketRef.current.emit('join_game', { roomId });
+
             const myPlayer: Player = {
                 id: gameState.myPlayerId,
-                name: playerName.trim() || `玩家 ${gameState.myPlayerId.slice(-4)}`,
+                name: user ? user.username : (playerName.trim() || `玩家 ${gameState.myPlayerId.slice(-4)}`),
                 position: 'bottom',
                 hand: [],
                 discards: [],
@@ -636,8 +651,17 @@ function App() {
                 isHu: false,
                 avatar: '🦊'
             };
-            const message: SocketMessage = { roomId, action: { type: 'JOIN', player: myPlayer } };
-            wsRef.current.send(JSON.stringify(message));
+
+            // Send JOIN action so Host knows about us
+            // Note: sendAction handles checking if we are host (we are not), so use direct emit or sendAction?
+            // sendAction relies on gameState.roomId being set which we just did implicitly via setGameState but closure capture might be stale?
+            // Safer to direct emit here.
+
+            socketRef.current.emit('game_action', {
+                roomId,
+                type: 'JOIN',
+                player: myPlayer
+            });
         }
     };
 
@@ -813,12 +837,53 @@ function App() {
 
     const renderLobby = () => (
         <div className="flex flex-col items-center justify-center min-h-screen z-50 relative">
-            <button
-                onClick={() => setShowRules(true)}
-                className="fixed top-4 right-4 z-[60] bg-emerald-700/90 hover:bg-emerald-600 text-white px-4 py-2 rounded-full shadow-lg border border-emerald-900"
-            >
-                游戏规则
-            </button>
+            {/* Top Bar Actions */}
+            {/* Top Bar Actions */}
+            <div className="absolute top-4 right-4 flex gap-4 z-50">
+                <button
+                    onClick={() => setShowRules(true)}
+                    className="bg-white/10 hover:bg-white/20 backdrop-blur-md text-white px-4 py-2 rounded-lg font-bold transition-all border border-white/20 shadow-lg"
+                >
+                    规则
+                </button>
+                <button
+                    onClick={() => setShowLeaderboard(true)}
+                    className="bg-white/10 hover:bg-white/20 backdrop-blur-md text-white px-4 py-2 rounded-lg font-bold transition-all border border-white/20 shadow-lg flex items-center gap-2"
+                >
+                    <Trophy size={18} className="text-yellow-400" />
+                    排行榜
+                </button>
+                {user ? (
+                    <div className="bg-emerald-600/20 backdrop-blur-md text-emerald-400 px-4 py-2 rounded-lg font-bold border border-emerald-500/30 flex items-center gap-2">
+                        <User size={18} />
+                        {user.username}
+                    </div>
+                ) : (
+                    <button
+                        onClick={() => setShowAuth(true)}
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg font-bold transition-all shadow-lg flex items-center gap-2"
+                    >
+                        <LogIn size={18} />
+                        登录 / 注册
+                    </button>
+                )}
+            </div>
+
+            {showAuth && (
+                <Auth
+                    onClose={() => setShowAuth(false)}
+                    onLogin={(usr, stats) => {
+                        setUser(usr);
+                        setPlayerName(usr.username);
+                        setShowAuth(false);
+                        addScoreToast(`欢迎回来, ${usr.username}!`, 'positive');
+                    }}
+                />
+            )}
+
+            {showLeaderboard && (
+                <Leaderboard onClose={() => setShowLeaderboard(false)} />
+            )}
 
             {showRules && (
                 <div className="fixed inset-0 z-[70] bg-black/70 flex items-center justify-center">
