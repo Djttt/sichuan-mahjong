@@ -14,7 +14,7 @@ export interface Player {
   position: PlayerPosition;
   hand: TileData[];
   discards: TileData[];
-  melds: TileData[][]; 
+  melds: TileData[][];
   score: number;
   dingQue: Suit | null;
   isHu: boolean;
@@ -30,13 +30,14 @@ export interface GameState {
   phase: GamePhase;
   currentTurnPlayerId: string;
   remainingTiles: number;
+  deck: TileData[]; // The actual deck of tiles
   players: Player[];
   lastDiscard: TileData | null;
   myPlayerId: string; // The ID of the local user
 }
 
 // Network Payloads
-export type NetworkAction = 
+export type NetworkAction =
   | { type: 'JOIN'; player: Player }
   | { type: 'STATE_UPDATE'; state: GameState }
   | { type: 'ACTION_DISCARD'; playerId: string; tileId: string }

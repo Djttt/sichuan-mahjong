@@ -18,6 +18,7 @@ function App() {
         phase: 'LOBBY',
         currentTurnPlayerId: '',
         remainingTiles: 0,
+        deck: [],
         players: [],
         lastDiscard: null,
         myPlayerId: ''
@@ -175,27 +176,33 @@ function App() {
                 }
                 const nextPlayerId = newPlayers[nextIndex]?.id ?? '';
 
-                // Host authority: create a random draw for next player
-                const suits: Suit[] = ['WAN', 'TIAO', 'TONG'];
-                const randomSuit = suits[Math.floor(Math.random() * 3)];
-                const randomRank = Math.floor(Math.random() * 9) + 1;
-                const newTile: TileData = { id: `draw-${Date.now()}`, suit: randomSuit, rank: randomRank };
+                // Host authority: Draw from real deck
+                let currentDeck = [...prev.deck];
+                let endingPhase = prev.phase;
 
-                if (newPlayers[nextIndex] && !newPlayers[nextIndex].isHu) {
-                    const playerToUpdate = newPlayers[nextIndex];
-                    // Do NOT sort yet. Append to end.
-                    newPlayers[nextIndex] = {
-                        ...playerToUpdate,
-                        hand: [...playerToUpdate.hand, newTile]
-                    };
+                if (currentDeck.length > 0) {
+                    const newTile = currentDeck.shift()!;
+
+                    if (newPlayers[nextIndex] && !newPlayers[nextIndex].isHu) {
+                        const playerToUpdate = newPlayers[nextIndex];
+                        // Do NOT sort yet. Append to end.
+                        newPlayers[nextIndex] = {
+                            ...playerToUpdate,
+                            hand: [...playerToUpdate.hand, newTile]
+                        };
+                    }
+                } else {
+                    endingPhase = 'GAME_OVER';
                 }
 
                 const newState: GameState = {
                     ...prev,
                     players: newPlayers,
+                    deck: currentDeck,
                     lastDiscard: tileToRemove,
                     currentTurnPlayerId: nextPlayerId,
-                    remainingTiles: Math.max(0, prev.remainingTiles - 1)
+                    remainingTiles: currentDeck.length,
+                    phase: endingPhase
                 };
 
                 if (newState.remainingTiles === 0) newState.phase = 'GAME_OVER';
@@ -265,10 +272,13 @@ function App() {
                 if (!actor) return prev;
 
                 // Gang requires drawing a replacement tile
-                const suits: Suit[] = ['WAN', 'TIAO', 'TONG'];
-                const randomSuit = suits[Math.floor(Math.random() * 3)];
-                const randomRank = Math.floor(Math.random() * 9) + 1;
-                const replacementTile: TileData = { id: `gang-draw-${Date.now()}`, suit: randomSuit, rank: randomRank };
+                let currentDeck = [...prev.deck];
+                if (currentDeck.length === 0) {
+                    // Should not happen if check strictly, but safe guard
+                    return { ...prev, phase: 'GAME_OVER' };
+                }
+                // Draw from end of wall for Gang replacement
+                const replacementTile = currentDeck.pop()!;
 
                 let newPlayers = [...prev.players];
                 let targetTile = prev.lastDiscard;
@@ -360,7 +370,8 @@ function App() {
                     players: newPlayers,
                     lastDiscard: targetTile,
                     currentTurnPlayerId: actor.id,
-                    remainingTiles: Math.max(0, prev.remainingTiles - 1)
+                    deck: currentDeck,
+                    remainingTiles: currentDeck.length
                 };
 
                 broadcastState(newState);
@@ -429,6 +440,7 @@ function App() {
                     ...prev,
                     phase: 'DINGQUE',
                     remainingTiles: deck.length,
+                    deck: deck, // Save remaining deck
                     players: nextPlayers,
                     lastDiscard: null,
                     currentTurnPlayerId: ''
@@ -1112,6 +1124,7 @@ function App() {
                                             dimmed={isDingQue}
                                             selected={selectedTileId === tile.id}
                                             onClick={() => {
+                                                if (myPlayer.isHu) return;
                                                 if (gameState.phase !== 'PLAYING' || gameState.currentTurnPlayerId !== gameState.myPlayerId) return;
                                                 if (selectedTileId === tile.id) handleDiscard(tile);
                                                 else setSelectedTileId(tile.id);
@@ -1124,6 +1137,9 @@ function App() {
 
                         {/* Actions HUD */}
                         {gameState.phase === 'PLAYING' && (() => {
+                            // If I have already Hu'd, I cannot do anything else
+                            if (myPlayer.isHu) return null;
+
                             // 计算当前可用的操作
                             const isMyTurn = gameState.currentTurnPlayerId === myPlayer.id;
                             const lastDiscard = gameState.lastDiscard;
