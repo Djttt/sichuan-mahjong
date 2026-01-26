@@ -987,10 +987,10 @@ function App() {
                                         </div>
                                     ))}
                                 </div>
-                                {/* Hand: Face down */}
+                                {/* Hand: Face down - 使用 Tile 组件渲染牌背 */}
                                 <div className="flex gap-[2px]">
                                     {playersByPos.top.hand.map((t, i) => (
-                                        <Tile key={i} size="sm" isFaceUp={false} className="shadow-md" />
+                                        <Tile key={i} size="md" isFaceUp={false} className="shadow-md" />
                                     ))}
                                 </div>
                             </div>
@@ -1022,10 +1022,11 @@ function App() {
                                 ))}
                             </div>
 
-                            <div className="flex flex-col gap-[4px] -mt-12">
+                            {/* Hand: Face down - 使用负边距让牌紧密叠加 */}
+                            <div className="flex flex-col -mt-12">
                                 {playersByPos.left.hand.map((t, i) => (
-                                    <div key={i} className="w-8 h-5 bg-emerald-800 rounded-[2px] border border-emerald-900 shadow-md relative side-tile-shadow-left">
-                                        <div className="absolute top-[-2px] left-0 w-full h-[2px] bg-emerald-600"></div>
+                                    <div key={i} className="-mb-6 first:mb-0">
+                                        <Tile size="md" isFaceUp={false} rotation={90} is3D={false} className="shadow-md" />
                                     </div>
                                 ))}
                             </div>
@@ -1056,10 +1057,11 @@ function App() {
                                 ))}
                             </div>
 
-                            <div className="flex flex-col gap-[4px] -mt-12">
+                            {/* Hand: Face down - 使用负边距让牌紧密叠加 */}
+                            <div className="flex flex-col -mt-12">
                                 {playersByPos.right.hand.map((t, i) => (
-                                    <div key={i} className="w-8 h-5 bg-emerald-800 rounded-[2px] border border-emerald-900 shadow-md relative side-tile-shadow-right">
-                                        <div className="absolute top-[-2px] left-0 w-full h-[2px] bg-emerald-600"></div>
+                                    <div key={i} className="-mb-6 first:mb-0">
+                                        <Tile size="md" isFaceUp={false} rotation={-90} is3D={false} className="shadow-md" />
                                     </div>
                                 ))}
                             </div>
@@ -1121,76 +1123,125 @@ function App() {
                         </div>
 
                         {/* Actions HUD */}
-                        {gameState.phase === 'PLAYING' && (
-                            <div className="absolute bottom-40 right-10 flex flex-col gap-2">
-                                {/* Claim Hint */}
-                                {(gameState.currentTurnPlayerId !== myPlayer.id && gameState.lastDiscard && (canPeng(myPlayer.hand, gameState.lastDiscard) || canGang(myPlayer.hand, gameState.lastDiscard))) && (
-                                    <div className="bg-black/40 text-white text-sm px-3 py-2 rounded-lg flex items-center gap-2 border border-white/20">
-                                        <span className="font-semibold">可碰/杠：</span>
-                                        <Tile tile={gameState.lastDiscard} size="sm" is3D={false} highlight />
-                                    </div>
-                                )}
-                                {/* HU Button */}
-                                {gameState.currentTurnPlayerId === myPlayer.id && canHu(myPlayer.hand, myPlayer.dingQue || 'WAN') && (
-                                    <button onClick={handleHu} className="bg-red-600 text-white font-black text-2xl w-20 h-20 rounded-full shadow-lg border-4 border-red-800 animate-bounce">
-                                        胡
-                                    </button>
-                                )}
+                        {gameState.phase === 'PLAYING' && (() => {
+                            // 计算当前可用的操作
+                            const isMyTurn = gameState.currentTurnPlayerId === myPlayer.id;
+                            const lastDiscard = gameState.lastDiscard;
 
-                                {/* GANG Button - 暗杠/明杠 */}
-                                {/* Check An Gang (My turn, 4 same tiles) OR Ming Gang (Others turn + discard) */}
-                                {(
-                                    (gameState.currentTurnPlayerId === myPlayer.id && canGang(myPlayer.hand)) ||
-                                    (gameState.currentTurnPlayerId !== myPlayer.id && gameState.lastDiscard && canGang(myPlayer.hand, gameState.lastDiscard))
-                                ) && (
+                            // 别人打牌时的操作判断
+                            const canDoPeng = !isMyTurn && lastDiscard && canPeng(myPlayer.hand, lastDiscard);
+                            const canDoMingGang = !isMyTurn && lastDiscard && canGang(myPlayer.hand, lastDiscard);
+
+                            // 自己回合时的操作判断
+                            const canDoAnGang = isMyTurn && canGang(myPlayer.hand);
+                            const canDoBuGang = isMyTurn && hasBuGang(myPlayer.hand, myPlayer.melds);
+                            const canDoHu = isMyTurn && canHu(myPlayer.hand, myPlayer.dingQue || 'WAN');
+
+                            // 智能按钮逻辑:
+                            // 场景1: 别人打牌 - 只能碰(手牌2张) → 显示碰
+                            // 场景2: 别人打牌 - 能碰也能杠(手牌3张) → 显示碰+杠
+                            // 场景3: 自己回合 - 能暗杠/加杠/胡 → 显示对应按钮
+
+                            const showClaimHint = !isMyTurn && lastDiscard && (canDoPeng || canDoMingGang);
+                            const showPassButton = !isMyTurn && lastDiscard && lastDiscard.id !== skippedDiscardId && (canDoPeng || canDoMingGang);
+
+                            return (
+                                <div className="absolute bottom-40 right-10 flex flex-col gap-2 items-center">
+                                    {/* Claim Hint - 显示当前可操作的牌 */}
+                                    {showClaimHint && (
+                                        <div className="bg-black/40 text-white text-sm px-3 py-2 rounded-lg flex items-center gap-2 border border-white/20">
+                                            <span className="font-semibold">
+                                                {canDoMingGang ? '可碰/杠：' : '可碰：'}
+                                            </span>
+                                            <Tile tile={lastDiscard} size="sm" is3D={false} highlight />
+                                        </div>
+                                    )}
+
+                                    {/* === 自己回合的操作按钮 === */}
+
+                                    {/* HU Button - 胡牌 (最高优先级) */}
+                                    {canDoHu && (
+                                        <button onClick={handleHu} className="bg-red-600 text-white font-black text-2xl w-20 h-20 rounded-full shadow-lg border-4 border-red-800 animate-bounce">
+                                            胡
+                                        </button>
+                                    )}
+
+                                    {/* AN GANG Section - 暗杠 (自己回合，手牌4张相同) */}
+                                    {canDoAnGang && (
+                                        <>
+                                            {/* 暗杠提示 */}
+                                            <div className="bg-black/40 text-white text-xs px-3 py-1.5 rounded-lg border border-white/20 text-center">
+                                                <span>可暗杠 (4张相同)</span>
+                                            </div>
+                                            {/* 杠按钮 */}
+                                            <button onClick={handleGang} className="bg-blue-600 text-white font-black text-xl w-16 h-16 rounded-full shadow-lg border-4 border-blue-800">
+                                                杠
+                                            </button>
+                                            {/* 不杠按钮 - 留牌之后仍可杠 */}
+                                            <button
+                                                onClick={() => setSelectedTileId(null)}
+                                                className="bg-gray-500 text-white font-bold text-sm w-16 h-16 rounded-full shadow-lg border-4 border-gray-700 hover:bg-gray-400"
+                                            >
+                                                <div className="flex flex-col items-center leading-tight">
+                                                    <span className="text-xs">不杠</span>
+                                                    <span className="text-[10px] text-gray-300">留牌</span>
+                                                </div>
+                                            </button>
+                                        </>
+                                    )}
+
+                                    {/* BU GANG Section - 加杠 (自己回合，已碰+第四张) */}
+                                    {canDoBuGang && (
+                                        <>
+                                            {/* 加杠提示 */}
+                                            <div className="bg-black/40 text-white text-xs px-3 py-1.5 rounded-lg border border-white/20 text-center">
+                                                <span>可加杠 (已碰+摸到)</span>
+                                            </div>
+                                            {/* 加杠按钮 */}
+                                            <button onClick={handleGang} className="bg-purple-600 text-white font-black text-lg w-16 h-16 rounded-full shadow-lg border-4 border-purple-800 animate-pulse">
+                                                <div className="flex flex-col items-center leading-tight">
+                                                    <span className="text-xs">加</span>
+                                                    <span className="text-xl -mt-1">杠</span>
+                                                </div>
+                                            </button>
+                                            {/* 不杠按钮 - 留牌之后仍可杠 */}
+                                            <button
+                                                onClick={() => setSelectedTileId(null)}
+                                                className="bg-gray-500 text-white font-bold text-sm w-16 h-16 rounded-full shadow-lg border-4 border-gray-700 hover:bg-gray-400"
+                                            >
+                                                <div className="flex flex-col items-center leading-tight">
+                                                    <span className="text-xs">不杠</span>
+                                                    <span className="text-[10px] text-gray-300">留牌</span>
+                                                </div>
+                                            </button>
+                                        </>
+                                    )}
+
+                                    {/* === 别人打牌时的操作按钮 === */}
+
+                                    {/* 智能显示: 能碰也能杠时，显示两个按钮让玩家选择 */}
+                                    {canDoMingGang && (
                                         <button onClick={handleGang} className="bg-blue-600 text-white font-black text-xl w-16 h-16 rounded-full shadow-lg border-4 border-blue-800">
                                             杠
                                         </button>
                                     )}
 
-                                {/* BU GANG Button - 加杠/弯杠 */}
-                                {/* Check Bu Gang (My turn, has Peng meld + matching tile in hand) */}
-                                {(
-                                    gameState.currentTurnPlayerId === myPlayer.id &&
-                                    hasBuGang(myPlayer.hand, myPlayer.melds)
-                                ) && (
-                                        <button onClick={handleGang} className="bg-purple-600 text-white font-black text-lg w-16 h-16 rounded-full shadow-lg border-4 border-purple-800 animate-pulse">
-                                            <div className="flex flex-col items-center leading-tight">
-                                                <span className="text-xs">加</span>
-                                                <span className="text-xl -mt-1">杠</span>
-                                            </div>
-                                        </button>
-                                    )}
-                                {/* PENG Button */}
-                                {/* Check Ming Peng (Others turn + discard) */}
-                                {(
-                                    gameState.currentTurnPlayerId !== myPlayer.id &&
-                                    gameState.lastDiscard &&
-                                    canPeng(myPlayer.hand, gameState.lastDiscard)
-                                ) && (
+                                    {/* PENG Button - 碰 (无论能否杠，碰按钮都显示) */}
+                                    {canDoPeng && (
                                         <button onClick={handlePeng} className="bg-emerald-600 text-white font-black text-xl w-16 h-16 rounded-full shadow-lg border-4 border-emerald-800">
                                             碰
                                         </button>
                                     )}
 
-                                {/* PASS Button */}
-                                {/* Show if any interaction is possible but it's not my turn (i.e. strictly responding to discard) */}
-                                {(
-                                    gameState.currentTurnPlayerId !== myPlayer.id &&
-                                    gameState.lastDiscard &&
-                                    gameState.lastDiscard.id !== skippedDiscardId &&
-                                    (
-                                        canPeng(myPlayer.hand, gameState.lastDiscard) ||
-                                        canGang(myPlayer.hand, gameState.lastDiscard)
-                                        // canHu(...) 
-                                    )
-                                ) && (
+                                    {/* PASS Button - 过 */}
+                                    {showPassButton && (
                                         <button onClick={handleSkip} className="bg-gray-500 text-white font-bold text-lg w-16 h-16 rounded-full shadow-lg border-4 border-gray-700 hover:bg-gray-400">
                                             过
                                         </button>
                                     )}
-                            </div>
-                        )}
+                                </div>
+                            );
+                        })()}
                     </div>
 
                     <PlayerAvatar

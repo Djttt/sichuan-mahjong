@@ -59,16 +59,23 @@ export const Tile: React.FC<TileProps> = ({
     // Rotate wrapper for side views
     const style = rotation ? { transform: `rotate(${rotation}deg)` } : {};
 
-    // Render Back of Tile (Green)
+    // Render Back of Tile (使用 bg.png 图片)
     if (!tile || !isFaceUp) {
         return (
             <div
-                className={`${baseClasses} bg-emerald-700 border border-emerald-600/50 shadow-inner`}
+                className={`${baseClasses} overflow-hidden shadow-md`}
                 onClick={onClick}
                 style={style}
             >
-                {/* Simple pattern on back */}
-                <div className="w-[80%] h-[80%] border-2 border-emerald-600 rounded-sm opacity-50"></div>
+                {/* 牌背图片 */}
+                <img
+                    src="/images/bg.png"
+                    alt="牌背"
+                    className="w-full h-full object-cover"
+                    draggable={false}
+                />
+                {/* 3D Depth Layer */}
+                {is3D && <div className="absolute bottom-[-4px] left-0 right-0 h-1 bg-emerald-800/80 rounded-b-[4px]"></div>}
             </div>
         );
     }
