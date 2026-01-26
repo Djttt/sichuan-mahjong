@@ -398,24 +398,39 @@ function App() {
                 const huCount = newPlayers.filter(p => p.isHu).length;
                 const shouldEnd = huCount >= newPlayers.length - 1 || prev.remainingTiles === 0;
 
-                // Advance turn to next non-Hu player if current player just Hu'd
+                // Advance turn to next non-Hu player if current player just Hu'd (Self-Draw / Zi Mo)
                 let nextPlayerId = prev.currentTurnPlayerId;
-                if (action.playerId === prev.currentTurnPlayerId) {
+                let currentDeck = [...prev.deck];
+
+                if (action.playerId === prev.currentTurnPlayerId && !shouldEnd) {
                     const currentIndex = newPlayers.findIndex(p => p.id === action.playerId);
                     let nextIndex = (currentIndex + 1) % newPlayers.length;
                     let safety = 0;
+                    // Find next non-Hu player
                     while (newPlayers[nextIndex]?.isHu && safety < newPlayers.length) {
                         nextIndex = (nextIndex + 1) % newPlayers.length;
                         safety++;
                     }
                     nextPlayerId = newPlayers[nextIndex]?.id ?? '';
+
+                    // Auto Draw for next player
+                    if (currentDeck.length > 0) {
+                        const newTile = currentDeck.shift()!;
+                        const playerToUpdate = newPlayers[nextIndex];
+                        newPlayers[nextIndex] = {
+                            ...playerToUpdate,
+                            hand: [...playerToUpdate.hand, newTile]
+                        };
+                    }
                 }
 
                 const newState: GameState = {
                     ...prev,
                     players: newPlayers,
                     phase: shouldEnd ? 'GAME_OVER' : prev.phase,
-                    currentTurnPlayerId: nextPlayerId
+                    currentTurnPlayerId: nextPlayerId,
+                    deck: currentDeck,
+                    remainingTiles: currentDeck.length
                 };
 
                 broadcastState(newState);
