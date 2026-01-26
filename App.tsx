@@ -122,21 +122,21 @@ function App() {
                 const allDone = newPlayers.every(p => p.dingQue !== null);
                 const nextPhase: GamePhase = allDone ? 'PLAYING' : 'DINGQUE';
                 const firstPlayerId = newPlayers[0]?.id ?? '';
+                let currentDeck = [...prev.deck];
 
                 // If entering PLAYING phase, the first player needs to draw a tile (14th tile)
                 if (allDone && firstPlayerId) {
                     const pIndex = newPlayers.findIndex(p => p.id === firstPlayerId);
                     if (pIndex !== -1) {
-                        // Generate random draw (Mocking the wall)
-                        const suits: Suit[] = ['WAN', 'TIAO', 'TONG'];
-                        const randomSuit = suits[Math.floor(Math.random() * 3)];
-                        const randomRank = Math.floor(Math.random() * 9) + 1;
-                        const newTile: TileData = { id: `start-draw-${Date.now()}`, suit: randomSuit, rank: randomRank };
+                        // Draw from deck instead of random
+                        if (currentDeck.length > 0) {
+                            const newTile = currentDeck.shift()!;
 
-                        newPlayers[pIndex] = {
-                            ...newPlayers[pIndex],
-                            hand: [...newPlayers[pIndex].hand, newTile] // Do not sort yet
-                        };
+                            newPlayers[pIndex] = {
+                                ...newPlayers[pIndex],
+                                hand: [...newPlayers[pIndex].hand, newTile] // Do not sort yet
+                            };
+                        }
                     }
                 }
 
@@ -144,7 +144,9 @@ function App() {
                     ...prev,
                     players: newPlayers,
                     phase: nextPhase,
-                    currentTurnPlayerId: firstPlayerId
+                    currentTurnPlayerId: firstPlayerId,
+                    deck: currentDeck,
+                    remainingTiles: currentDeck.length
                 };
                 broadcastState(newState);
                 return newState;
@@ -716,6 +718,7 @@ function App() {
             phase: 'DINGQUE',
             players: allPlayers,
             remainingTiles: deck.length,
+            deck: deck, // Save remaining deck
             currentTurnPlayerId: ''
         }));
     };
@@ -742,6 +745,7 @@ function App() {
             ...gameState,
             phase: 'DINGQUE',
             remainingTiles: deck.length,
+            deck: deck, // Save remaining deck
             players: tempPlayers
         };
 
