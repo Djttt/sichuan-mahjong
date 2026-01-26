@@ -1165,10 +1165,11 @@ function App() {
 
                             // 检查 lastDiscard 是否是自己打出的牌（在自己的弃牌堆中）
                             const isMyOwnDiscard = lastDiscard && myPlayer.discards.some(t => t.id === lastDiscard.id);
+                            const isSkipped = lastDiscard && lastDiscard.id === skippedDiscardId;
 
-                            // 别人打牌时的操作判断 - 确保不是自己打的牌
-                            const canDoPeng = !isMyTurn && lastDiscard && !isMyOwnDiscard && canPeng(myPlayer.hand, lastDiscard);
-                            const canDoMingGang = !isMyTurn && lastDiscard && !isMyOwnDiscard && canGang(myPlayer.hand, lastDiscard);
+                            // 别人打牌时的操作判断 - 确保不是自己打的牌，且没有被跳过
+                            const canDoPeng = !isMyTurn && lastDiscard && !isMyOwnDiscard && !isSkipped && canPeng(myPlayer.hand, lastDiscard);
+                            const canDoMingGang = !isMyTurn && lastDiscard && !isMyOwnDiscard && !isSkipped && canGang(myPlayer.hand, lastDiscard);
 
                             // 自己回合时的操作判断
                             const canDoAnGang = isMyTurn && canGang(myPlayer.hand);
