@@ -1128,9 +1128,12 @@ function App() {
                             const isMyTurn = gameState.currentTurnPlayerId === myPlayer.id;
                             const lastDiscard = gameState.lastDiscard;
 
-                            // 别人打牌时的操作判断
-                            const canDoPeng = !isMyTurn && lastDiscard && canPeng(myPlayer.hand, lastDiscard);
-                            const canDoMingGang = !isMyTurn && lastDiscard && canGang(myPlayer.hand, lastDiscard);
+                            // 检查 lastDiscard 是否是自己打出的牌（在自己的弃牌堆中）
+                            const isMyOwnDiscard = lastDiscard && myPlayer.discards.some(t => t.id === lastDiscard.id);
+
+                            // 别人打牌时的操作判断 - 确保不是自己打的牌
+                            const canDoPeng = !isMyTurn && lastDiscard && !isMyOwnDiscard && canPeng(myPlayer.hand, lastDiscard);
+                            const canDoMingGang = !isMyTurn && lastDiscard && !isMyOwnDiscard && canGang(myPlayer.hand, lastDiscard);
 
                             // 自己回合时的操作判断
                             const canDoAnGang = isMyTurn && canGang(myPlayer.hand);
@@ -1142,8 +1145,8 @@ function App() {
                             // 场景2: 别人打牌 - 能碰也能杠(手牌3张) → 显示碰+杠
                             // 场景3: 自己回合 - 能暗杠/加杠/胡 → 显示对应按钮
 
-                            const showClaimHint = !isMyTurn && lastDiscard && (canDoPeng || canDoMingGang);
-                            const showPassButton = !isMyTurn && lastDiscard && lastDiscard.id !== skippedDiscardId && (canDoPeng || canDoMingGang);
+                            const showClaimHint = !isMyTurn && lastDiscard && !isMyOwnDiscard && (canDoPeng || canDoMingGang);
+                            const showPassButton = !isMyTurn && lastDiscard && !isMyOwnDiscard && lastDiscard.id !== skippedDiscardId && (canDoPeng || canDoMingGang);
 
                             return (
                                 <div className="absolute bottom-40 right-10 flex flex-col gap-2 items-center">
@@ -1253,7 +1256,11 @@ function App() {
 
                 {/* DingQue Overlay */}
                 {gameState.phase === 'DINGQUE' && (
-                    <DingQuePanel onSelect={handleDingQue} recommended={getRecommendedDingQue(myPlayer.hand)} />
+                    <DingQuePanel
+                        onSelect={handleDingQue}
+                        recommended={getRecommendedDingQue(myPlayer.hand)}
+                        hand={myPlayer.hand}
+                    />
                 )}
 
                 {/* Game Over */}
