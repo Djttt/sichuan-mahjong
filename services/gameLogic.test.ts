@@ -499,6 +499,46 @@ describe('特殊牌型检测', () => {
     });
 });
 
+// ==================== Bug 复现测试 ====================
+
+describe('Bug复现: 点炮胡与碰/杠并存', () => {
+
+    it('既能胡也能碰: 听6万/9万 (66万做将, 78万搭子), 别人打6万', () => {
+        // 手牌: 123w, 456w, 66w(将), 78w, 111b
+        // 别人打 6w
+        // 应该能胡: 123, 456, 66(将), 678(顺), 111
+        // 应该能碰: 手里有 66w
+
+        const hand = createTiles('1w 2w 3w 4w 5w 6w 6w 6w 7w 8w 1b 1b 1b');
+        // 注意 createTiles 可能会把 6w 6w 6w 视为前三个，但 Suit/Rank 是对的
+        // 实际上上面的手牌有 3 张 6w。
+        // 为了精确模拟用户的"顺子456, 对子66"，我们需要确认 hand 里的牌是 3 张 6w。
+        // createTiles '4w 5w 6w 6w 6w' -> 确实是 3 张 6w。
+
+        const discardTile = createTile('6w');
+
+        // 检测胡牌: 把弃牌加入手牌
+        const handWithDiscard = [...hand, discardTile];
+        expect(canHu(handWithDiscard, 'TIAO')).toBe(true);
+
+        // 检测碰
+        expect(canPeng(hand, discardTile)).toBe(true);
+
+        // 检测杠 (手里有3张6w)
+        expect(canGang(hand, discardTile)).toBe(true);
+    });
+
+    it('普通点炮胡: 听6万 (78万搭子), 别人打6万', () => {
+        // 手牌: 123w, 456w, 11w(将), 78w, 111b
+        // 别人打 6w
+        const hand = createTiles('1w 2w 3w 4w 5w 6w 1w 1w 7w 8w 1b 1b 1b');
+        const discardTile = createTile('6w');
+
+        const handWithDiscard = [...hand, discardTile];
+        expect(canHu(handWithDiscard, 'TIAO')).toBe(true);
+    });
+});
+
 console.log(`
 ===============================================
 四川麻将测试模式
