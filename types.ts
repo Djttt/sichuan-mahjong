@@ -21,6 +21,7 @@ export interface Player {
   avatar: string;
   isReady?: boolean;
   voiceCharacter?: string; // ID of the voice character
+  skippedDiscardId?: string | null; // Tracks which discard id this player has explicitly passed
 }
 
 export type GamePhase = 'LOBBY' | 'DEALING' | 'DINGQUE' | 'PLAYING' | 'GAME_OVER';
@@ -46,7 +47,8 @@ export type NetworkAction =
   | { type: 'ACTION_HU'; playerId: string }
   | { type: 'ACTION_PENG'; playerId: string }
   | { type: 'ACTION_GANG'; playerId: string; isWanGang?: boolean; targetTileId?: string }
-  | { type: 'ACTION_RESTART' };
+  | { type: 'ACTION_RESTART' }
+  | { type: 'ACTION_PASS'; playerId: string };
 
 export interface SocketMessage {
   roomId: string;

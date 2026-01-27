@@ -220,7 +220,8 @@ function App() {
                     if (p.id === action.playerId) {
                         return { ...p, hand: sortedHand, discards: [...p.discards, tileToRemove] };
                     }
-                    return p;
+                    // Reset skips on new discard
+                    return { ...p, skippedDiscardId: null };
                 });
 
                 const currentIndex = newPlayers.findIndex(p => p.id === action.playerId);
@@ -521,6 +522,18 @@ function App() {
                 return newState;
             }
 
+            if (action.type === 'ACTION_PASS') {
+                const newPlayers = prev.players.map(p => {
+                    if (p.id === action.playerId && prev.lastDiscard) {
+                        return { ...p, skippedDiscardId: prev.lastDiscard.id };
+                    }
+                    return p;
+                });
+                const newState = { ...prev, players: newPlayers };
+                broadcastState(newState);
+                return newState;
+            }
+
             return prev;
         });
     };
@@ -537,21 +550,30 @@ function App() {
         // AI Logic
         const runBotLogic = () => {
             // --- HUMAN BLOCKING CHECK ---
-            // If there is a discard on table, and human player can Peng/Gang/Hu it,
-            // and human hasn't skipped this specific discard yet,
-            // then PAUSE AI.
-            const humanPlayer = gameState.players.find(p => !p.id.startsWith('bot-'));
+            // Iterate ALL players to see if any human can act on the last discard.
+            // If so, pause AI (unless they passed).
             const lastDiscard = gameState.lastDiscard;
 
-            if (lastDiscard && humanPlayer && lastDiscard.id !== skippedDiscardId) {
-                const canAction =
-                    canPeng(humanPlayer.hand, lastDiscard) ||
-                    canGang(humanPlayer.hand, lastDiscard) ||
-                    canHu(humanPlayer.hand, humanPlayer.dingQue || 'WAN'); // TODO: Pass discard to canHu if logic supported (dian hu)
+            if (lastDiscard && lastDiscard.id !== skippedDiscardId) {
+                // Check all non-turn players
+                const interruptors = gameState.players.filter(p => !p.id.startsWith('bot-') && p.id !== gameState.currentTurnPlayerId);
 
-                if (canAction) {
-                    // Block AI until human decides
-                    return;
+                for (const human of interruptors) {
+                    // If this human already passed this tile, skip blocking
+                    if (human.skippedDiscardId === lastDiscard.id) continue;
+
+                    // Dian Hu Check (Hand + Discard)
+                    const canDianHu = canHu([...human.hand, lastDiscard], human.dingQue || 'WAN');
+
+                    const canAction =
+                        canPeng(human.hand, lastDiscard) ||
+                        canGang(human.hand, lastDiscard) ||
+                        canDianHu;
+
+                    if (canAction) {
+                        // Block AI until human decides
+                        return;
+                    }
                 }
             }
 
@@ -744,6 +766,7 @@ function App() {
                 score: 10000,
                 dingQue: null,
                 isHu: false,
+                skippedDiscardId: null,
                 avatar: '🦊',
                 voiceCharacter: getSavedCharacter()
             };
@@ -779,6 +802,7 @@ function App() {
             score: 10000,
             dingQue: null,
             isHu: false,
+            skippedDiscardId: null,
             avatar: ['🤖', '👾', '👽', '🧠'][botIndex % 4],
             voiceCharacter: (['xiaobei', 'yunxi', 'xiaoxiao', 'yunjian'][botIndex % 4]) as VoiceCharacter
         };
@@ -809,6 +833,7 @@ function App() {
             score: 10000,
             dingQue: null,
             isHu: false,
+            skippedDiscardId: null,
             avatar: '🦁',
             voiceCharacter: getSavedCharacter()
         };
@@ -823,6 +848,7 @@ function App() {
             score: 10000,
             dingQue: null,
             isHu: false,
+            skippedDiscardId: null,
             avatar: ['🤖', '👾', '👽'][i - 1],
             voiceCharacter: (['xiaobei', 'yunxi', 'xiaoxiao'][i - 1]) as VoiceCharacter
         }));
@@ -907,6 +933,8 @@ function App() {
     const handleSkip = () => {
         if (gameState.lastDiscard) {
             setSkippedDiscardId(gameState.lastDiscard.id);
+            // Notify server/host that we passed this tile
+            sendAction({ type: 'ACTION_PASS', playerId: gameState.myPlayerId });
         }
     };
 
