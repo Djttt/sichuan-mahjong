@@ -1364,18 +1364,27 @@ function App() {
                             const canDoPeng = !isMyTurn && lastDiscard && !isMyOwnDiscard && !isSkipped && canPeng(myPlayer.hand, lastDiscard);
                             const canDoMingGang = !isMyTurn && lastDiscard && !isMyOwnDiscard && !isSkipped && canGang(myPlayer.hand, lastDiscard);
 
+                            // 关键修复：点炮胡检测
+                            // 构造临时手牌：现有手牌 + 别人打出的这张牌
+                            const canDoDianHu = !isMyTurn && lastDiscard && !isMyOwnDiscard && !isSkipped && (() => {
+                                const tempHand = [...myPlayer.hand, lastDiscard];
+                                return canHu(tempHand, myPlayer.dingQue || 'WAN');
+                            })();
+
                             // 自己回合时的操作判断
                             const canDoAnGang = isMyTurn && canGang(myPlayer.hand);
                             const canDoBuGang = isMyTurn && hasBuGang(myPlayer.hand, myPlayer.melds);
-                            const canDoHu = isMyTurn && canHu(myPlayer.hand, myPlayer.dingQue || 'WAN');
+                            const canDoZiMoHu = isMyTurn && canHu(myPlayer.hand, myPlayer.dingQue || 'WAN');
 
                             // 智能按钮逻辑:
                             // 场景1: 别人打牌 - 只能碰(手牌2张) → 显示碰
                             // 场景2: 别人打牌 - 能碰也能杠(手牌3张) → 显示碰+杠
-                            // 场景3: 自己回合 - 能暗杠/加杠/胡 → 显示对应按钮
+                            // 场景3: 别人打牌 - 能胡 → 显示胡
+                            // 场景4: 自己回合 - 能暗杠/加杠/胡 → 显示对应按钮
 
-                            const showClaimHint = !isMyTurn && lastDiscard && !isMyOwnDiscard && (canDoPeng || canDoMingGang);
-                            const showPassButton = !isMyTurn && lastDiscard && !isMyOwnDiscard && lastDiscard.id !== skippedDiscardId && (canDoPeng || canDoMingGang);
+                            const showClaimHint = !isMyTurn && lastDiscard && !isMyOwnDiscard && (canDoPeng || canDoMingGang || canDoDianHu);
+                            // 能胡或者能碰杠时都显示“过”按钮
+                            const showPassButton = !isMyTurn && lastDiscard && !isMyOwnDiscard && lastDiscard.id !== skippedDiscardId && (canDoPeng || canDoMingGang || canDoDianHu);
 
                             return (
                                 <div className="absolute bottom-40 right-10 flex flex-col gap-2 items-center">
@@ -1383,7 +1392,7 @@ function App() {
                                     {showClaimHint && (
                                         <div className="bg-black/40 text-white text-sm px-3 py-2 rounded-lg flex items-center gap-2 border border-white/20">
                                             <span className="font-semibold">
-                                                {canDoMingGang ? '可碰/杠：' : '可碰：'}
+                                                {canDoDianHu ? '可胡：' : (canDoMingGang ? '可碰/杠：' : '可碰：')}
                                             </span>
                                             <Tile tile={lastDiscard} size="sm" is3D={false} highlight />
                                         </div>
@@ -1391,8 +1400,8 @@ function App() {
 
                                     {/* === 自己回合的操作按钮 === */}
 
-                                    {/* HU Button - 胡牌 (最高优先级) */}
-                                    {canDoHu && (
+                                    {/* ZI MO HU Button - 自摸胡 (最高优先级) */}
+                                    {canDoZiMoHu && (
                                         <button onClick={handleHu} className="bg-red-600 text-white font-black text-2xl w-20 h-20 rounded-full shadow-lg border-4 border-red-800 animate-bounce">
                                             胡
                                         </button>
@@ -1416,7 +1425,7 @@ function App() {
                                             >
                                                 <div className="flex flex-col items-center leading-tight">
                                                     <span className="text-xs">不杠</span>
-                                                    <span className="text-[10px] text-gray-300">留牌</span>
+                                                    <span className="text-10px text-gray-300">留牌</span>
                                                 </div>
                                             </button>
                                         </>
@@ -1443,13 +1452,20 @@ function App() {
                                             >
                                                 <div className="flex flex-col items-center leading-tight">
                                                     <span className="text-xs">不杠</span>
-                                                    <span className="text-[10px] text-gray-300">留牌</span>
+                                                    <span className="text-10px text-gray-300">留牌</span>
                                                 </div>
                                             </button>
                                         </>
                                     )}
 
                                     {/* === 别人打牌时的操作按钮 === */}
+
+                                    {/* DIAN HU Button - 点炮胡 */}
+                                    {canDoDianHu && (
+                                        <button onClick={handleHu} className="bg-red-600 text-white font-black text-2xl w-24 h-24 rounded-full shadow-lg border-4 border-red-800 animate-bounce z-50">
+                                            胡
+                                        </button>
+                                    )}
 
                                     {/* 智能显示: 能碰也能杠时，显示两个按钮让玩家选择 */}
                                     {canDoMingGang && (
