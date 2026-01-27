@@ -632,6 +632,12 @@ function App() {
     // --- GAMEPLAY ACTIONS ---
 
     const createRoom = () => {
+        if (!user) {
+            setShowAuth(true);
+            addScoreToast('请登录以创建房间', 'neutral');
+            return;
+        }
+
         if (!wsReady) {
             addScoreToast('正在连接服务器，请稍候...', 'neutral');
             return;
@@ -1138,54 +1144,79 @@ function App() {
                         )}
                     </div>
                 ) : (
-                    // Main Menu
-                    <div className="space-y-4">
+                    // Main Menu - Redesigned
+                    <div className="space-y-6 w-full">
                         <button
                             onClick={startBotGame}
-                            className="w-full flex items-center justify-center gap-2 font-bold py-3 rounded-lg transition bg-indigo-600 hover:bg-indigo-500 text-white border-b-4 border-indigo-800"
+                            className="group w-full relative overflow-hidden rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 p-[2px] transition-all hover:scale-[1.02] shadow-xl shadow-indigo-900/30 active:scale-95"
                         >
-                            <Bot /> 人机对战
+                            <div className="relative flex items-center justify-center gap-3 bg-[#0a0a0a]/10 backdrop-blur-sm h-full py-4 rounded-2xl transition-all group-hover:bg-transparent">
+                                <Bot className="w-6 h-6 text-white" />
+                                <span className="text-xl font-bold text-white tracking-wide">人机对战</span>
+                            </div>
                         </button>
 
                         <button
                             onClick={createRoom}
                             disabled={!wsReady}
-                            className={`w-full flex items-center justify-center gap-2 font-bold py-3 rounded-lg transition border-b-4 ${wsReady ? 'bg-emerald-700 hover:bg-emerald-600 text-white border-emerald-900' : 'bg-gray-600 text-gray-300 border-gray-800 cursor-not-allowed'}`}
+                            className={`group w-full relative overflow-hidden rounded-2xl p-[2px] transition-all hover:scale-[1.02] shadow-xl shadow-emerald-900/30 active:scale-95 ${wsReady ? 'bg-gradient-to-r from-emerald-600 to-teal-600' : 'bg-gray-700 cursor-not-allowed'
+                                }`}
                         >
-                            <Users /> 创建房间（房主）
+                            <div className={`relative flex items-center justify-center gap-3 bg-[#0a0a0a]/10 backdrop-blur-sm h-full py-4 rounded-2xl transition-all group-hover:bg-transparent`}>
+                                <Users className="w-6 h-6 text-white" />
+                                <span className="text-xl font-bold text-white tracking-wide">创建房间 (房主)</span>
+                            </div>
                         </button>
 
-                        <div className="relative">
-                            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-600"></div></div>
-                            <div className="relative flex justify-center text-sm"><span className="px-2 bg-[#0a3a3a] text-gray-400">或</span></div>
+                        <div className="relative py-2">
+                            <div className="absolute inset-0 flex items-center">
+                                <div className="w-full border-t border-white/10"></div>
+                            </div>
+                            <div className="relative flex justify-center text-sm">
+                                <span className="px-4 bg-[#0a3a3a] text-slate-400 font-medium">或</span>
+                            </div>
                         </div>
 
-                        <div className="flex gap-2">
-                            <input
-                                type="text"
-                                placeholder="你的昵称"
-                                maxLength={12}
-                                className="flex-1 bg-black/30 border border-emerald-600/50 rounded-lg px-4 text-white focus:outline-none focus:border-yellow-400"
-                                value={playerName}
-                                onChange={e => setPlayerName(e.target.value)}
-                            />
-                        </div>
+                        <div className="space-y-4">
+                            <div className="relative group">
+                                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                                    <User className="h-5 w-5 text-slate-500 group-focus-within:text-emerald-400 transition-colors" />
+                                </div>
+                                <input
+                                    type="text"
+                                    placeholder="你的昵称"
+                                    maxLength={12}
+                                    className="block w-full pl-11 pr-4 py-3 bg-[#051e1e] border border-emerald-900/50 rounded-xl text-emerald-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 transition-all font-medium"
+                                    value={playerName}
+                                    onChange={e => setPlayerName(e.target.value)}
+                                />
+                            </div>
 
-                        <div className="flex gap-2">
-                            <input
-                                type="text"
-                                placeholder="输入房间号"
-                                className="flex-1 bg-black/30 border border-emerald-600/50 rounded-lg px-4 text-white focus:outline-none focus:border-yellow-400"
-                                value={lobbyInput}
-                                onChange={e => setLobbyInput(e.target.value)}
-                            />
-                            <button
-                                onClick={joinRoom}
-                                disabled={!wsReady}
-                                className={`${wsReady ? 'bg-blue-700 hover:bg-blue-600 text-white' : 'bg-gray-600 text-gray-300 cursor-not-allowed'} px-4 rounded-lg font-bold`}
-                            >
-                                <LogIn size={20} />
-                            </button>
+                            <div className="flex gap-3">
+                                <div className="relative group flex-1">
+                                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                                        <LogIn className="h-5 w-5 text-slate-500 group-focus-within:text-indigo-400 transition-colors" />
+                                    </div>
+                                    <input
+                                        type="text"
+                                        placeholder="输入房间号"
+                                        className="block w-full pl-11 pr-4 py-3 bg-[#051e1e] border border-emerald-900/50 rounded-xl text-emerald-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/50 transition-all font-medium font-mono"
+                                        value={lobbyInput}
+                                        onChange={e => setLobbyInput(e.target.value)}
+                                        onKeyDown={e => e.key === 'Enter' && joinRoom()}
+                                    />
+                                </div>
+                                <button
+                                    onClick={joinRoom}
+                                    disabled={!wsReady || !lobbyInput}
+                                    className={`px-6 rounded-xl font-bold transition-all flex items-center justify-center ${wsReady && lobbyInput
+                                            ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg hover:shadow-indigo-500/30 active:scale-95'
+                                            : 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                                        }`}
+                                >
+                                    <ArrowLeft className="rotate-180" size={24} />
+                                </button>
+                            </div>
                         </div>
                     </div>
                 )}
