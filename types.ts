@@ -20,6 +20,7 @@ export interface Player {
   isHu: boolean;
   avatar: string;
   isReady?: boolean;
+  voiceCharacter?: string; // ID of the voice character
 }
 
 export type GamePhase = 'LOBBY' | 'DEALING' | 'DINGQUE' | 'PLAYING' | 'GAME_OVER';

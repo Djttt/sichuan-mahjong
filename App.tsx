@@ -7,11 +7,13 @@ import { TableCenter } from './components/TableCenter';
 import { PlayerAvatar } from './components/PlayerAvatar';
 import { getRecommendedDingQue, canHu, canGang, canPeng, calculateFan, hasBuGang } from './services/gameLogic';
 import { ScoreToast } from './components/ScoreToast';
-import { Copy, Users, Play, LogIn, ArrowLeft, Bot, Trophy, User, RefreshCw } from 'lucide-react';
+import { Copy, Users, Play, LogIn, ArrowLeft, Bot, Trophy, User, RefreshCw, Volume2 } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
 import { Auth } from './components/Auth';
 import { Leaderboard } from './components/Leaderboard';
 import { UserProfile } from './components/UserProfile';
+import { VoiceSettings, VoiceSettingsButton } from './components/VoiceSettings';
+import { playDiscardVoice, playActionVoice, getSavedCharacter, getVoiceEnabled, preloadVoiceCharacter, VoiceCharacter } from './services/voiceService';
 import axios from 'axios';
 
 const USER_ID_PREFIX = 'player-';
@@ -49,12 +51,17 @@ function App() {
     // Socket Ref
     const socketRef = useRef<Socket | null>(null);
     const roomIdRef = useRef<string>('');
+    const prevGameStateRef = useRef<GameState | null>(null);
+    const [showVoiceSettings, setShowVoiceSettings] = useState(false);
 
     // --- INITIALIZATION ---
     useEffect(() => {
         // Generate a random ID for this session (used as player id, or override with user.id later)
         const myId = `${USER_ID_PREFIX}${Math.floor(Math.random() * 10000)}`;
         setGameState(prev => ({ ...prev, myPlayerId: myId }));
+
+        // Preload voice assets
+        preloadVoiceCharacter(getSavedCharacter());
 
         // Socket.IO Connection
         const socket = io(`http://${window.location.hostname}:6001`);
@@ -560,6 +567,47 @@ function App() {
         return () => clearTimeout(timer);
     }, [gameState.phase, gameState.currentTurnPlayerId, gameState.players, gameState.isMultiplayer, gameState.roomId, gameState.myPlayerId, skippedDiscardId]);
 
+    // --- SOUND EFFECTS ---
+    useEffect(() => {
+        const prev = prevGameStateRef.current;
+        const curr = gameState;
+
+        if (prev) {
+            // 1. Detect New Discard
+            if (curr.lastDiscard && (!prev.lastDiscard || curr.lastDiscard.id !== prev.lastDiscard.id)) {
+                const discarder = curr.players.find(p => p.discards.some(t => t.id === curr.lastDiscard!.id));
+                if (discarder) {
+                    playDiscardVoice((discarder.voiceCharacter as VoiceCharacter) || 'xiaoni', curr.lastDiscard!);
+                }
+            }
+
+            // 2. Detect Hu
+            curr.players.forEach(p => {
+                const prevPlayer = prev.players.find(pp => pp.id === p.id);
+                if (p.isHu && (!prevPlayer || !prevPlayer.isHu)) {
+                    // Self Draw (Zi Mo) typically happens during your own turn
+                    const isZiMo = prev.currentTurnPlayerId === p.id;
+                    playActionVoice((p.voiceCharacter as VoiceCharacter) || 'xiaoni', isZiMo ? 'zimo' : 'hu');
+                }
+            });
+
+            // 3. Detect Peng / Gang (Melds increased)
+            curr.players.forEach(p => {
+                const prevPlayer = prev.players.find(pp => pp.id === p.id);
+                if (prevPlayer && p.melds.length > prevPlayer.melds.length) {
+                    const newMeld = p.melds[p.melds.length - 1];
+                    if (newMeld.length === 3) {
+                        playActionVoice((p.voiceCharacter as VoiceCharacter) || 'xiaoni', 'peng');
+                    } else if (newMeld.length === 4) {
+                        playActionVoice((p.voiceCharacter as VoiceCharacter) || 'xiaoni', 'gang');
+                    }
+                }
+            });
+        }
+
+        prevGameStateRef.current = curr;
+    }, [gameState]);
+
     const broadcastState = (state: GameState) => {
         if (!state.isMultiplayer) return;
         if (!socketRef.current) return;
@@ -603,7 +651,8 @@ function App() {
             score: 10000,
             dingQue: null,
             isHu: false,
-            avatar: '🦁'
+            avatar: '🦁',
+            voiceCharacter: getSavedCharacter()
         };
 
         const roomId = myId;
@@ -655,7 +704,8 @@ function App() {
                 score: 10000,
                 dingQue: null,
                 isHu: false,
-                avatar: '🦊'
+                avatar: '🦊',
+                voiceCharacter: getSavedCharacter()
             };
 
             // Send JOIN action so Host knows about us
@@ -689,7 +739,8 @@ function App() {
             score: 10000,
             dingQue: null,
             isHu: false,
-            avatar: ['🤖', '👾', '👽', '🧠'][botIndex % 4]
+            avatar: ['🤖', '👾', '👽', '🧠'][botIndex % 4],
+            voiceCharacter: (['xiaobei', 'yunxi', 'xiaoxiao', 'yunjian'][botIndex % 4]) as VoiceCharacter
         };
 
         const newState: GameState = {
@@ -718,7 +769,8 @@ function App() {
             score: 10000,
             dingQue: null,
             isHu: false,
-            avatar: '🦁'
+            avatar: '🦁',
+            voiceCharacter: getSavedCharacter()
         };
 
         const bots: Player[] = [1, 2, 3].map(i => ({
@@ -731,7 +783,8 @@ function App() {
             score: 10000,
             dingQue: null,
             isHu: false,
-            avatar: ['🤖', '👾', '👽'][i - 1]
+            avatar: ['🤖', '👾', '👽'][i - 1],
+            voiceCharacter: (['xiaobei', 'yunxi', 'xiaoxiao'][i - 1]) as VoiceCharacter
         }));
 
         // Deal tiles
@@ -942,6 +995,7 @@ function App() {
             {/* Top Bar Actions */}
             {/* Top Bar Actions */}
             <div className="absolute top-4 right-4 flex gap-4 z-50">
+                <VoiceSettingsButton onClick={() => setShowVoiceSettings(true)} />
                 <button
                     onClick={() => setShowRules(true)}
                     className="bg-white/10 hover:bg-white/20 backdrop-blur-md text-white px-4 py-2 rounded-lg font-bold transition-all border border-white/20 shadow-lg"
@@ -1013,6 +1067,7 @@ function App() {
                 />
             )}
 
+            {showVoiceSettings && <VoiceSettings onClose={() => setShowVoiceSettings(false)} />}
             {showRules && (
                 <div className="fixed inset-0 z-[70] bg-black/70 flex items-center justify-center">
                     <div className="bg-white text-gray-800 max-w-2xl w-[90%] p-6 rounded-2xl shadow-2xl">
@@ -1151,13 +1206,17 @@ function App() {
 
         return (
             <div className="relative w-screen h-screen overflow-hidden flex items-center justify-center select-none">
-                <button
-                    onClick={() => setShowRules(true)}
-                    className="fixed top-4 right-4 z-[60] bg-emerald-700/90 hover:bg-emerald-600 text-white px-4 py-2 rounded-full shadow-lg border border-emerald-900"
-                >
-                    游戏规则
-                </button>
+                <div className="fixed top-4 right-4 z-[60] flex gap-2">
+                    <VoiceSettingsButton onClick={() => setShowVoiceSettings(true)} />
+                    <button
+                        onClick={() => setShowRules(true)}
+                        className="bg-emerald-700/90 hover:bg-emerald-600 text-white px-4 py-2 rounded-full shadow-lg border border-emerald-900"
+                    >
+                        游戏规则
+                    </button>
+                </div>
 
+                {showVoiceSettings && <VoiceSettings onClose={() => setShowVoiceSettings(false)} />}
                 {showRules && (
                     <div className="fixed inset-0 z-[70] bg-black/70 flex items-center justify-center">
                         <div className="bg-white text-gray-800 max-w-2xl w-[90%] p-6 rounded-2xl shadow-2xl">
