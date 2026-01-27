@@ -14,6 +14,8 @@ import { Leaderboard } from './components/Leaderboard';
 import { UserProfile } from './components/UserProfile';
 import { VoiceSettings, VoiceSettingsButton } from './components/VoiceSettings';
 import { playDiscardVoice, playActionVoice, getSavedCharacter, getVoiceEnabled, preloadVoiceCharacter, VoiceCharacter } from './services/voiceService';
+import { handleDiscardLogic, handlePassLogic } from './services/gameStateReducer';
+import { handleGangLogic } from './services/gangLogicReducer';
 import axios from 'axios';
 
 const USER_ID_PREFIX = 'player-';
@@ -237,32 +239,63 @@ function App() {
                 let currentDeck = [...prev.deck];
                 let endingPhase = prev.phase;
 
-                if (currentDeck.length > 0) {
-                    const newTile = currentDeck.shift()!;
+                let nextLastDiscard = tileToRemove;
 
-                    if (newPlayers[nextIndex] && !newPlayers[nextIndex].isHu) {
-                        const playerToUpdate = newPlayers[nextIndex];
-                        // Do NOT sort yet. Append to end.
-                        newPlayers[nextIndex] = {
-                            ...playerToUpdate,
-                            hand: [...playerToUpdate.hand, newTile]
-                        };
+                // Check Claims FIRST
+                const discarderId = action.playerId;
+                const anyClaims = newPlayers.some(p => {
+                    if (p.id === discarderId) return false;
+                    // If already skipped, ignore
+                    if (p.skippedDiscardId === tileToRemove.id) return false;
+
+                    // Check using standard 13-tile hand (next player hasn't drawn yet)
+                    const canH = canHu([...p.hand, tileToRemove], p.dingQue || 'WAN');
+                    const canP = canPeng(p.hand, tileToRemove);
+                    const canG = canGang(p.hand, tileToRemove);
+
+                    return canH || canP || canG;
+                });
+
+                if (!anyClaims) {
+                    // No claims: Auto-Draw for next player
+                    nextLastDiscard = null;
+                    if (currentDeck.length > 0) {
+                        const newTile = currentDeck.shift()!;
+                        if (newPlayers[nextIndex] && !newPlayers[nextIndex].isHu) {
+                            const playerToUpdate = newPlayers[nextIndex];
+                            newPlayers[nextIndex] = {
+                                ...playerToUpdate,
+                                hand: [...playerToUpdate.hand, newTile] // Do NOT sort yet
+                            };
+                        }
+                    } else {
+                        endingPhase = 'GAME_OVER';
                     }
-                } else {
-                    endingPhase = 'GAME_OVER';
                 }
 
                 const newState: GameState = {
                     ...prev,
                     players: newPlayers,
                     deck: currentDeck,
-                    lastDiscard: tileToRemove,
+                    lastDiscard: nextLastDiscard,
                     currentTurnPlayerId: nextPlayerId,
                     remainingTiles: currentDeck.length,
                     phase: endingPhase
                 };
 
                 if (newState.remainingTiles === 0) newState.phase = 'GAME_OVER';
+
+                // Host Check: If no one can claim this discard, clear it immediately so next player can play
+                // But we must respect the 'Interrupted Turn' logic.
+                // If we clear it, 'isInterruptedTurn' becomes false, so next player can play.
+                // We need to check if ANYONE (except discarder) can Peng/Gang/Hu
+                // Exclude discarder
+                // For Next Player (currentTurnPlayerId), only check Hu (cannot Peng/Gang upper) - Simplified: Generic check is fine, rules enforce it usually
+                // But specifically for Sichuan Mahjong: Can only Peng/Gang from any discard? Usually yes.
+                // Wait, Sichuan Mahjong: can Peng anyone. Next player CAN Peng previous player? Yes. 
+                // So we just check logical possibility.
+
+                // Removed duplicate state update
 
                 broadcastState(newState);
                 return newState;
@@ -325,112 +358,7 @@ function App() {
             }
 
             if (action.type === 'ACTION_GANG') {
-                const actor = prev.players.find(p => p.id === action.playerId);
-                if (!actor) return prev;
-
-                // Gang requires drawing a replacement tile
-                let currentDeck = [...prev.deck];
-                if (currentDeck.length === 0) {
-                    // Should not happen if check strictly, but safe guard
-                    return { ...prev, phase: 'GAME_OVER' };
-                }
-                // Draw from end of wall for Gang replacement
-                const replacementTile = currentDeck.pop()!;
-
-                let newPlayers = [...prev.players];
-                let targetTile = prev.lastDiscard;
-
-                // Detect Gang Type
-                // If targetTileId is provided, it's a DIAN GANG (Ming)
-                const isDianGang = !!prev.lastDiscard && action.playerId !== prev.currentTurnPlayerId;
-
-                if (isDianGang && targetTile) {
-                    // DIAN GANG: Claim discard
-
-                    // 1. Revert Interrupted Draw
-                    const interruptedPlayerId = prev.currentTurnPlayerId;
-                    newPlayers = newPlayers.map(p => {
-                        if (p.id === interruptedPlayerId) {
-                            const poppedHand = [...p.hand];
-                            poppedHand.pop();
-                            return { ...p, hand: poppedHand };
-                        }
-                        return p;
-                    });
-
-                    // 2. Remove Discard
-                    newPlayers = newPlayers.map(p => ({
-                        ...p,
-                        discards: p.discards.filter(t => t.id !== targetTile!.id)
-                    }));
-
-                    // 3. Move 3 from hand + 1 discard
-                    newPlayers = newPlayers.map(p => {
-                        if (p.id === actor.id) {
-                            const handMatches = p.hand.filter(t => t.suit === targetTile!.suit && t.rank === targetTile!.rank);
-                            const keptHand = p.hand.filter(t => t.suit !== targetTile!.suit || t.rank !== targetTile!.rank);
-                            // Meld 4
-                            const meld = [...handMatches.slice(0, 3), targetTile!];
-                            return {
-                                ...p,
-                                hand: [...keptHand, replacementTile], // Add replacement
-                                melds: [...p.melds, meld]
-                            };
-                        }
-                        return p;
-                    });
-
-                    targetTile = null; // Consumed
-
-                } else {
-                    // AN GANG (Dark) or BU GANG (Add)
-                    // Check existing melds for Bu Gang
-                    const isBuGang = actor.melds.some(m => m[0].suit === actor.hand[0]?.suit); // Simplification, need logic
-                    // Actually easier: User logic determined action. We just need to find the quad.
-
-                    newPlayers = newPlayers.map(p => {
-                        if (p.id === actor.id) {
-                            // Try Bu Gang: Check if I have a tile that matches a meld
-                            const buGangCandidate = p.hand.find(h => p.melds.some(m => m[0].suit === h.suit && m[0].rank === h.rank && m.length === 3));
-
-                            if (buGangCandidate) {
-                                const newHand = p.hand.filter(t => t.id !== buGangCandidate.id);
-                                const newMelds = p.melds.map(m => {
-                                    if (m[0].suit === buGangCandidate.suit && m[0].rank === buGangCandidate.rank) {
-                                        return [...m, buGangCandidate];
-                                    }
-                                    return m;
-                                });
-                                return { ...p, hand: [...newHand, replacementTile], melds: newMelds };
-                            }
-
-                            // Else An Gang: Find 4 matches
-                            // Find any rank with 4
-                            const counts: Record<string, number> = {};
-                            p.hand.forEach(t => counts[`${t.suit}-${t.rank}`] = (counts[`${t.suit}-${t.rank}`] || 0) + 1);
-                            const gangKey = Object.keys(counts).find(k => counts[k] === 4);
-
-                            if (gangKey) {
-                                const [s, r] = gangKey.split('-');
-                                const gangTiles = p.hand.filter(t => t.suit === s && t.rank === parseInt(r));
-                                const newHand = p.hand.filter(t => t.suit !== s || t.rank !== parseInt(r));
-                                return { ...p, hand: [...newHand, replacementTile], melds: [...p.melds, gangTiles] };
-                            }
-                            return p;
-                        }
-                        return p;
-                    });
-                }
-
-                const newState: GameState = {
-                    ...prev,
-                    players: newPlayers,
-                    lastDiscard: targetTile,
-                    currentTurnPlayerId: actor.id,
-                    deck: currentDeck,
-                    remainingTiles: currentDeck.length
-                };
-
+                const newState = handleGangLogic(prev, action);
                 broadcastState(newState);
                 return newState;
             }
@@ -529,7 +457,58 @@ function App() {
                     }
                     return p;
                 });
-                const newState = { ...prev, players: newPlayers };
+
+                // Host Check: After this pass, are there any claims left?
+                let lastDiscard = prev.lastDiscard;
+                let currentDeck = [...prev.deck];
+                let endingPhase = prev.phase;
+                let updatedPlayers = newPlayers;
+
+                if (lastDiscard) {
+                    const anyClaimsLeft = updatedPlayers.some(p => {
+                        if (p.skippedDiscardId === lastDiscard!.id) return false;
+
+                        // Check validity - everyone has 13 tiles max currently if waiting
+                        return canHu([...p.hand, lastDiscard!], p.dingQue || 'WAN') ||
+                            canPeng(p.hand, lastDiscard!) ||
+                            canGang(p.hand, lastDiscard!);
+                    });
+
+                    if (!anyClaimsLeft) {
+                        // Everyone passed or cannot claim.
+                        lastDiscard = null;
+
+                        // Proceed to DRAW TILE for the current turn player
+                        if (currentDeck.length > 0) {
+                            const newTile = currentDeck.shift()!;
+
+                            // currentTurnPlayerId was set in ACTION_DISCARD
+                            const tIndex = updatedPlayers.findIndex(p => p.id === prev.currentTurnPlayerId);
+                            if (tIndex !== -1 && !updatedPlayers[tIndex].isHu) {
+                                updatedPlayers = updatedPlayers.map((p, i) => {
+                                    if (i === tIndex) {
+                                        return { ...p, hand: [...p.hand, newTile] };
+                                    }
+                                    return p;
+                                });
+                            }
+                        } else {
+                            endingPhase = 'GAME_OVER';
+                        }
+                    }
+                }
+
+                const newState: GameState = {
+                    ...prev,
+                    players: updatedPlayers,
+                    lastDiscard,
+                    deck: currentDeck,
+                    remainingTiles: currentDeck.length,
+                    phase: endingPhase
+                };
+
+                if (newState.remainingTiles === 0) newState.phase = 'GAME_OVER';
+
                 broadcastState(newState);
                 return newState;
             }
@@ -926,6 +905,15 @@ function App() {
             return;
         }
 
+
+        // Validation - Prevent Acting if Interrupted
+        const isInterruptedTurn = gameState.currentTurnPlayerId === gameState.myPlayerId && gameState.lastDiscard && !gameState.players.find(p => p.id === gameState.myPlayerId)?.discards.some(t => t.id === gameState.lastDiscard?.id);
+
+        if (isInterruptedTurn) {
+            addScoreToast('请等待其他玩家操作（碰/杠/胡）', 'neutral');
+            return;
+        }
+
         setSelectedTileId(null);
         sendAction({ type: 'ACTION_DISCARD', playerId: gameState.myPlayerId, tileId: tile.id });
     };
@@ -1178,7 +1166,34 @@ function App() {
                             <p className="text-gray-400 text-sm mb-1">房间号（分享给朋友）</p>
                             <div className="flex items-center justify-center gap-2 text-yellow-400 font-mono text-xl font-bold bg-black/40 p-2 rounded">
                                 {gameState.roomId}
-                                <button onClick={() => navigator.clipboard.writeText(gameState.roomId)} className="hover:text-white"><Copy size={16} /></button>
+                                <button
+                                    onClick={() => {
+                                        if (navigator.clipboard && navigator.clipboard.writeText) {
+                                            navigator.clipboard.writeText(gameState.roomId)
+                                                .then(() => addScoreToast('房间号已复制', 'positive'))
+                                                .catch(() => addScoreToast('复制失败', 'negative'));
+                                        } else {
+                                            // Fallback for non-secure contexts (LAN http)
+                                            try {
+                                                const textArea = document.createElement("textarea");
+                                                textArea.value = gameState.roomId;
+                                                textArea.style.position = "fixed";  // Avoid scrolling to bottom
+                                                document.body.appendChild(textArea);
+                                                textArea.focus();
+                                                textArea.select();
+                                                const successful = document.execCommand('copy');
+                                                document.body.removeChild(textArea);
+                                                if (successful) addScoreToast('房间号已复制', 'positive');
+                                                else addScoreToast('请手动复制', 'neutral');
+                                            } catch (err) {
+                                                addScoreToast('请手动复制', 'neutral');
+                                            }
+                                        }
+                                    }}
+                                    className="hover:text-white"
+                                >
+                                    <Copy size={16} />
+                                </button>
                             </div>
                         </div>
 
@@ -1500,13 +1515,25 @@ function App() {
                             const isSkipped = lastDiscard && lastDiscard.id === skippedDiscardId;
 
                             // 别人打牌时的操作判断 - 确保不是自己打的牌，且没有被跳过
-                            const canDoPeng = !isMyTurn && lastDiscard && !isMyOwnDiscard && !isSkipped && canPeng(myPlayer.hand, lastDiscard);
-                            const canDoMingGang = !isMyTurn && lastDiscard && !isMyOwnDiscard && !isSkipped && canGang(myPlayer.hand, lastDiscard);
+                            // 关键修复：即使轮到自己（系统自动摸牌了），如果上一张弃牌还在（说明是刚刚上家打出的），依然可以碰/杠/胡它（抢在自己出牌前）
+                            const isInterruptedTurn = isMyTurn && lastDiscard && !isMyOwnDiscard;
+
+                            const canDoPeng = (!isMyTurn || isInterruptedTurn) && lastDiscard && !isMyOwnDiscard && !isSkipped && canPeng(myPlayer.hand, lastDiscard);
+                            const canDoMingGang = (!isMyTurn || isInterruptedTurn) && lastDiscard && !isMyOwnDiscard && !isSkipped && canGang(myPlayer.hand, lastDiscard);
 
                             // 关键修复：点炮胡检测
                             // 构造临时手牌：现有手牌 + 别人打出的这张牌
-                            const canDoDianHu = !isMyTurn && lastDiscard && !isMyOwnDiscard && !isSkipped && (() => {
-                                const tempHand = [...myPlayer.hand, lastDiscard];
+                            const canDoDianHu = (!isMyTurn || isInterruptedTurn) && lastDiscard && !isMyOwnDiscard && !isSkipped && (() => {
+                                // 如果是 Interrupted Turn (手里有14张)，计算胡牌时应该排除掉刚摸的一张？
+                                // 不，canHu 只是检查能否胡。如果手里14张，再加 discard 就是 15 张， logic 会失败。
+                                // 所以如果是 Interrupted Turn，说明手里有一张是刚摸的。我们需要假设"没有摸那张牌"的情况。
+                                // 简单做法：如果手牌 14 张，去掉最后一张（刚摸的）来检测胡 discard。
+                                let baseHand = myPlayer.hand;
+                                if (isInterruptedTurn && baseHand.length % 3 === 2) {
+                                    // 移除最后一张（刚摸的）
+                                    baseHand = baseHand.slice(0, baseHand.length - 1);
+                                }
+                                const tempHand = [...baseHand, lastDiscard];
                                 return canHu(tempHand, myPlayer.dingQue || 'WAN');
                             })();
 
@@ -1521,9 +1548,9 @@ function App() {
                             // 场景3: 别人打牌 - 能胡 → 显示胡
                             // 场景4: 自己回合 - 能暗杠/加杠/胡 → 显示对应按钮
 
-                            const showClaimHint = !isMyTurn && lastDiscard && !isMyOwnDiscard && (canDoPeng || canDoMingGang || canDoDianHu);
+                            const showClaimHint = (!isMyTurn || isInterruptedTurn) && lastDiscard && !isMyOwnDiscard && (canDoPeng || canDoMingGang || canDoDianHu);
                             // 能胡或者能碰杠时都显示“过”按钮
-                            const showPassButton = !isMyTurn && lastDiscard && !isMyOwnDiscard && lastDiscard.id !== skippedDiscardId && (canDoPeng || canDoMingGang || canDoDianHu);
+                            const showPassButton = (!isMyTurn || isInterruptedTurn) && lastDiscard && !isMyOwnDiscard && lastDiscard.id !== skippedDiscardId && (canDoPeng || canDoMingGang || canDoDianHu);
 
                             return (
                                 <div className="absolute bottom-40 right-10 flex flex-col gap-2 items-center">
