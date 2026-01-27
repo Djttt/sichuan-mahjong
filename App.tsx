@@ -7,12 +7,15 @@ import { TableCenter } from './components/TableCenter';
 import { PlayerAvatar } from './components/PlayerAvatar';
 import { getRecommendedDingQue, canHu, canGang, canPeng, calculateFan, hasBuGang } from './services/gameLogic';
 import { ScoreToast } from './components/ScoreToast';
-import { Copy, Users, Play, LogIn, ArrowLeft, Bot, Trophy, User } from 'lucide-react';
+import { Copy, Users, Play, LogIn, ArrowLeft, Bot, Trophy, User, RefreshCw } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
 import { Auth } from './components/Auth';
 import { Leaderboard } from './components/Leaderboard';
+import { UserProfile } from './components/UserProfile';
+import axios from 'axios';
 
 const USER_ID_PREFIX = 'player-';
+const API_URL = `http://${window.location.hostname}:6001/api`;
 
 function App() {
     const [gameState, setGameState] = useState<GameState>({
@@ -37,8 +40,11 @@ function App() {
 
     // Auth & Leaderboard State
     const [user, setUser] = useState<{ id: number, username: string } | null>(null);
+    const [userStats, setUserStats] = useState<any>(null);
     const [showAuth, setShowAuth] = useState(false);
     const [showLeaderboard, setShowLeaderboard] = useState(false);
+    const [showUserProfile, setShowUserProfile] = useState(false);
+    const [gameSettled, setGameSettled] = useState(false);
 
     // Socket Ref
     const socketRef = useRef<Socket | null>(null);
@@ -811,6 +817,102 @@ function App() {
         }
     };
 
+    // 刷新用户统计数据
+    const refreshUserStats = async () => {
+        if (!user) return;
+        try {
+            const res = await axios.get(`${API_URL}/user/${user.id}/stats`, { withCredentials: true });
+            setUserStats(res.data.stats);
+        } catch (err) {
+            console.error('Failed to refresh user stats', err);
+        }
+    };
+
+    // 对局结算 - 调用后端 API
+    const settleGame = async () => {
+        if (!user) return; // 只有登录用户才结算
+        if (gameSettled) return; // 防止重复结算
+
+        const isHost = gameState.roomId === gameState.myPlayerId;
+        if (!isHost && gameState.isMultiplayer) return; // 多人模式只有房主结算
+
+        try {
+            // 获取我的玩家数据
+            const myPlayer = gameState.players.find(p => p.id === gameState.myPlayerId);
+            if (!myPlayer) return;
+
+            // 判断胡牌类型
+            const isWinner = myPlayer.isHu;
+            // 简单判断：如果胡牌时手牌数为14(自摸)则是自摸
+            const isSelfDraw = isWinner && myPlayer.hand.length % 3 === 2;
+            // 简单判断放炮：如果有其他玩家胡牌且我没胡
+            const otherWinners = gameState.players.filter(p => p.isHu && p.id !== gameState.myPlayerId);
+            const isDiscardLoss = !isWinner && otherWinners.length > 0;
+
+            // 检测牌型
+            const isQingyise = myPlayer.hand.every(t => t.suit === myPlayer.hand[0]?.suit) &&
+                myPlayer.melds.every(m => m[0].suit === myPlayer.hand[0]?.suit);
+            const isQidui = myPlayer.melds.length === 0 && myPlayer.hand.length === 14;
+            const gangCount = myPlayer.melds.filter(m => m.length === 4).length;
+
+            // 构建玩家数据 - 只提交登录用户
+            const playersData = [{
+                user_id: user.id,
+                final_score: myPlayer.score,
+                is_winner: isWinner,
+                is_self_draw: isSelfDraw,
+                is_discard_loss: isDiscardLoss,
+                is_qingyise: isQingyise && isWinner,
+                is_qidui: isQidui && isWinner,
+                gang_count: gangCount
+            }];
+
+            // 构建结果摘要
+            const winners = gameState.players.filter(p => p.isHu).map(p => p.name);
+            const resultSummary = winners.length > 0
+                ? `胡牌: ${winners.join(', ')}`
+                : '流局';
+
+            // 调用结算 API
+            const res = await axios.post(`${API_URL}/game/settle`, {
+                players: playersData,
+                result_summary: resultSummary,
+                game_type: gameState.isMultiplayer ? 'multiplayer' : 'bot'
+            }, { withCredentials: true });
+
+            console.log('Game settled:', res.data);
+            setGameSettled(true);
+
+            // 刷新用户统计
+            await refreshUserStats();
+
+            // 显示 ELO 变化
+            const result = res.data.results?.find((r: any) => r.user_id === user.id);
+            if (result) {
+                const changeText = result.elo_change >= 0
+                    ? `+${result.elo_change}`
+                    : `${result.elo_change}`;
+                addScoreToast(`ELO ${changeText} → ${result.new_elo}`, result.elo_change >= 0 ? 'positive' : 'negative');
+            }
+        } catch (err) {
+            console.error('Failed to settle game:', err);
+        }
+    };
+
+    // 监听游戏结束，自动结算
+    useEffect(() => {
+        if (gameState.phase === 'GAME_OVER' && user && !gameSettled) {
+            settleGame();
+        }
+    }, [gameState.phase, user, gameSettled]);
+
+    // 重置结算状态
+    useEffect(() => {
+        if (gameState.phase === 'DINGQUE') {
+            setGameSettled(false);
+        }
+    }, [gameState.phase]);
+
     const addScoreToast = (text: string, type: 'positive' | 'negative' | 'neutral') => {
         const id = Date.now();
         setScoreEvents(prev => [...prev, { id, text, type }]);
@@ -854,10 +956,23 @@ function App() {
                     排行榜
                 </button>
                 {user ? (
-                    <div className="bg-emerald-600/20 backdrop-blur-md text-emerald-400 px-4 py-2 rounded-lg font-bold border border-emerald-500/30 flex items-center gap-2">
+                    <button
+                        onClick={() => setShowUserProfile(true)}
+                        className="bg-emerald-600/20 hover:bg-emerald-600/30 backdrop-blur-md text-emerald-400 px-4 py-2 rounded-lg font-bold border border-emerald-500/30 flex items-center gap-2 transition-all"
+                    >
                         <User size={18} />
-                        {user.username}
-                    </div>
+                        <span>{user.username}</span>
+                        {userStats && (
+                            <span className="bg-emerald-500/20 px-2 py-0.5 rounded text-xs font-mono">
+                                {userStats.elo_score} ELO
+                            </span>
+                        )}
+                        {userStats?.replenish_count > 0 && (
+                            <span className="text-orange-400 flex items-center gap-0.5 text-xs">
+                                <RefreshCw size={12} />×{userStats.replenish_count}
+                            </span>
+                        )}
+                    </button>
                 ) : (
                     <button
                         onClick={() => setShowAuth(true)}
@@ -874,6 +989,7 @@ function App() {
                     onClose={() => setShowAuth(false)}
                     onLogin={(usr, stats) => {
                         setUser(usr);
+                        setUserStats(stats);
                         setPlayerName(usr.username);
                         setShowAuth(false);
                         addScoreToast(`欢迎回来, ${usr.username}!`, 'positive');
@@ -881,8 +997,20 @@ function App() {
                 />
             )}
 
+            {showUserProfile && user && (
+                <UserProfile
+                    userId={user.id}
+                    username={user.username}
+                    onClose={() => setShowUserProfile(false)}
+                    onStatsUpdated={refreshUserStats}
+                />
+            )}
+
             {showLeaderboard && (
-                <Leaderboard onClose={() => setShowLeaderboard(false)} />
+                <Leaderboard
+                    onClose={() => setShowLeaderboard(false)}
+                    currentUserId={user?.id}
+                />
             )}
 
             {showRules && (
