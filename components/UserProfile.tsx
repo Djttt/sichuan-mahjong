@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import {
     X, User, Trophy, Target, Flame, TrendingUp, TrendingDown,
-    RefreshCw, Award, Zap, AlertCircle, Clock
+    RefreshCw, Award, Zap, AlertCircle, Clock, LogIn
 } from 'lucide-react';
 
 interface UserStatsData {
@@ -28,11 +28,12 @@ interface UserProfileProps {
     username: string;
     onClose: () => void;
     onStatsUpdated?: () => void;
+    onLogout?: () => void;
 }
 
 const API_URL = `http://${window.location.hostname}:6001/api`;
 
-export function UserProfile({ userId, username, onClose, onStatsUpdated }: UserProfileProps) {
+export function UserProfile({ userId, username, onClose, onStatsUpdated, onLogout }: UserProfileProps) {
     const [stats, setStats] = useState<UserStatsData | null>(null);
     const [canReplenish, setCanReplenish] = useState(false);
     const [replenishReason, setReplenishReason] = useState('');
@@ -131,12 +132,12 @@ export function UserProfile({ userId, username, onClose, onStatsUpdated }: UserP
                 </button>
 
                 {/* Header */}
-                <div className="flex items-center gap-4 mb-6">
+                <div className="flex items-center gap-4 mb-6 relative">
                     <div className="w-16 h-16 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-full flex items-center justify-center text-2xl font-bold text-white">
                         {username.charAt(0).toUpperCase()}
                     </div>
                     <div>
-                        <h2 className="text-2xl font-bold text-white">{username}</h2>
+                        <h2 className="text-2xl font-bold text-white max-w-[200px] truncate">{username}</h2>
                         <div className="flex items-center gap-2 mt-1">
                             <Trophy size={16} className="text-yellow-400" />
                             <span className="text-emerald-400 font-bold text-lg">{stats.elo_score} ELO</span>
@@ -147,6 +148,16 @@ export function UserProfile({ userId, username, onClose, onStatsUpdated }: UserP
                             )}
                         </div>
                     </div>
+
+                    {onLogout && (
+                        <button
+                            onClick={onLogout}
+                            className="absolute top-0 right-10 text-slate-400 hover:text-red-400 transition-colors flex items-center gap-1 text-xs bg-slate-700/50 hover:bg-slate-700 px-2 py-1.5 rounded-lg border border-slate-600"
+                        >
+                            <LogIn size={12} className="rotate-180" />
+                            退出登录
+                        </button>
+                    )}
                 </div>
 
                 {/* Message */}
@@ -184,8 +195,8 @@ export function UserProfile({ userId, username, onClose, onStatsUpdated }: UserP
                                     onClick={handleReplenish}
                                     disabled={!canReplenish || replenishing}
                                     className={`px-4 py-2 rounded-lg font-bold transition-all flex items-center gap-2 ${canReplenish && !replenishing
-                                            ? 'bg-yellow-500 hover:bg-yellow-400 text-black'
-                                            : 'bg-slate-600 text-slate-400 cursor-not-allowed'
+                                        ? 'bg-yellow-500 hover:bg-yellow-400 text-black'
+                                        : 'bg-slate-600 text-slate-400 cursor-not-allowed'
                                         }`}
                                 >
                                     <RefreshCw size={16} className={replenishing ? 'animate-spin' : ''} />

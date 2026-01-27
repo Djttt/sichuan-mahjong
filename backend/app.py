@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, session
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from flask_cors import CORS
 from flask_bcrypt import Bcrypt
@@ -53,7 +53,10 @@ def register():
     db.session.add(new_stats)
     db.session.commit()
 
-    return jsonify({"message": "User created", "user": new_user.to_dict()}), 201
+    # Log in immediately
+    session['user_id'] = new_user.id
+
+    return jsonify({"message": "User created", "user": new_user.to_dict(), "stats": new_stats.to_dict()}), 201
 
 @app.route("/api/login", methods=["POST"])
 def login():
@@ -63,6 +66,7 @@ def login():
 
     user = User.query.filter_by(username=username).first()
     if user and bcrypt.check_password_hash(user.password_hash, password):
+        session['user_id'] = user.id
         return jsonify({
             "message": "Login successful",
             "user": user.to_dict(),
@@ -70,6 +74,27 @@ def login():
         }), 200
     
     return jsonify({"error": "Invalid credentials"}), 401
+
+@app.route("/api/me", methods=["GET"])
+def get_current_user():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({"error": "Not logged in"}), 401
+        
+    user = User.query.get(user_id)
+    if not user:
+        session.clear()
+        return jsonify({"error": "User not found"}), 401
+        
+    return jsonify({
+        "user": user.to_dict(),
+        "stats": user.stats.to_dict() if user.stats else {}
+    }), 200
+
+@app.route("/api/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return jsonify({"message": "Logged out"}), 200
 
 
 @app.route("/api/user/<int:user_id>/stats", methods=["GET"])

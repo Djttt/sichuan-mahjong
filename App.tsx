@@ -48,6 +48,35 @@ function App() {
     const [showUserProfile, setShowUserProfile] = useState(false);
     const [gameSettled, setGameSettled] = useState(false);
 
+    // Initial Auth Check
+    useEffect(() => {
+        const checkAuth = async () => {
+            try {
+                const res = await axios.get(`${API_URL}/me`, { withCredentials: true });
+                setUser(res.data.user);
+                setUserStats(res.data.stats);
+                setPlayerName(res.data.user.username);
+                addScoreToast(`欢迎回来, ${res.data.user.username}!`, 'positive');
+            } catch (err) {
+                // Not logged in, that's fine
+            }
+        };
+        checkAuth();
+    }, []);
+
+    const handleLogout = async () => {
+        try {
+            await axios.post(`${API_URL}/logout`, {}, { withCredentials: true });
+            setUser(null);
+            setUserStats(null);
+            setPlayerName('');
+            setShowUserProfile(false);
+            addScoreToast('已退出登录', 'neutral');
+        } catch (err) {
+            console.error('Logout failed', err);
+        }
+    };
+
     // Socket Ref
     const socketRef = useRef<Socket | null>(null);
     const roomIdRef = useRef<string>('');
@@ -678,6 +707,11 @@ function App() {
     };
 
     const joinRoom = () => {
+        if (!user) {
+            setShowAuth(true);
+            addScoreToast('请登录以加入房间', 'neutral');
+            return;
+        }
         if (!wsReady) {
             addScoreToast('正在连接服务器，请稍候...', 'neutral');
             return;
@@ -767,7 +801,7 @@ function App() {
 
         const humanPlayer: Player = {
             id: myId,
-            name: '你',
+            name: user ? user.username : '你',
             position: 'bottom',
             hand: [],
             discards: [],
@@ -1063,6 +1097,7 @@ function App() {
                     username={user.username}
                     onClose={() => setShowUserProfile(false)}
                     onStatsUpdated={refreshUserStats}
+                    onLogout={handleLogout}
                 />
             )}
 
@@ -1178,20 +1213,6 @@ function App() {
                         </div>
 
                         <div className="space-y-4">
-                            <div className="relative group">
-                                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                                    <User className="h-5 w-5 text-slate-500 group-focus-within:text-emerald-400 transition-colors" />
-                                </div>
-                                <input
-                                    type="text"
-                                    placeholder="你的昵称"
-                                    maxLength={12}
-                                    className="block w-full pl-11 pr-4 py-3 bg-[#051e1e] border border-emerald-900/50 rounded-xl text-emerald-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 transition-all font-medium"
-                                    value={playerName}
-                                    onChange={e => setPlayerName(e.target.value)}
-                                />
-                            </div>
-
                             <div className="flex gap-3">
                                 <div className="relative group flex-1">
                                     <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
@@ -1210,8 +1231,8 @@ function App() {
                                     onClick={joinRoom}
                                     disabled={!wsReady || !lobbyInput}
                                     className={`px-6 rounded-xl font-bold transition-all flex items-center justify-center ${wsReady && lobbyInput
-                                            ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg hover:shadow-indigo-500/30 active:scale-95'
-                                            : 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                                        ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg hover:shadow-indigo-500/30 active:scale-95'
+                                        : 'bg-gray-800 text-gray-500 cursor-not-allowed'
                                         }`}
                                 >
                                     <ArrowLeft className="rotate-180" size={24} />
