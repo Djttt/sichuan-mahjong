@@ -450,6 +450,18 @@ function App() {
                 return newState;
             }
 
+            if (action.type === 'ACTION_UPDATE_VOICE') {
+                const newPlayers = prev.players.map(p => {
+                    if (p.id === action.playerId) {
+                        return { ...p, voiceCharacter: action.voiceCharacter };
+                    }
+                    return p;
+                });
+                const newState: GameState = { ...prev, players: newPlayers };
+                broadcastState(newState);
+                return newState;
+            }
+
             if (action.type === 'ACTION_PASS') {
                 const newPlayers = prev.players.map(p => {
                     if (p.id === action.playerId && prev.lastDiscard) {
@@ -604,12 +616,14 @@ function App() {
 
         if (prev) {
             // 1. Detect New Discard
-            if (curr.lastDiscard && (!prev.lastDiscard || curr.lastDiscard.id !== prev.lastDiscard.id)) {
-                const discarder = curr.players.find(p => p.discards.some(t => t.id === curr.lastDiscard!.id));
-                if (discarder) {
-                    playDiscardVoice((discarder.voiceCharacter as VoiceCharacter) || 'xiaoni', curr.lastDiscard!);
+            // 1. Detect New Discard (Changed to detect discards array updates)
+            curr.players.forEach(p => {
+                const prevP = prev.players.find(pp => pp.id === p.id);
+                if (prevP && p.discards.length > prevP.discards.length) {
+                    const newDiscard = p.discards[p.discards.length - 1];
+                    playDiscardVoice((p.voiceCharacter as VoiceCharacter) || 'xiaoni', newDiscard);
                 }
-            }
+            });
 
             // 2. Detect Hu
             curr.players.forEach(p => {
@@ -926,6 +940,28 @@ function App() {
         }
     };
 
+    const handleVoiceChange = (character: VoiceCharacter) => {
+        // Update local player voice in multiplayer or single player
+        // For multiplayer, we send action. For single player, we update state directly.
+        if (gameState.isMultiplayer) {
+            sendAction({
+                type: 'ACTION_UPDATE_VOICE',
+                playerId: gameState.myPlayerId,
+                voiceCharacter: character
+            });
+        } else {
+            setGameState(prev => {
+                const newPlayers = prev.players.map(p => {
+                    if (p.id === prev.myPlayerId) {
+                        return { ...p, voiceCharacter: character };
+                    }
+                    return p;
+                });
+                return { ...prev, players: newPlayers };
+            });
+        }
+    };
+
     // 刷新用户统计数据
     const refreshUserStats = async () => {
         if (!user) return;
@@ -1124,7 +1160,7 @@ function App() {
                 />
             )}
 
-            {showVoiceSettings && <VoiceSettings onClose={() => setShowVoiceSettings(false)} />}
+            {showVoiceSettings && <VoiceSettings onClose={() => setShowVoiceSettings(false)} onCharacterSelect={handleVoiceChange} />}
             {showRules && (
                 <div className="fixed inset-0 z-[70] bg-black/70 flex items-center justify-center">
                     <div className="bg-white text-gray-800 max-w-2xl w-[90%] p-6 rounded-2xl shadow-2xl">
@@ -1311,7 +1347,7 @@ function App() {
                     </button>
                 </div>
 
-                {showVoiceSettings && <VoiceSettings onClose={() => setShowVoiceSettings(false)} />}
+                {showVoiceSettings && <VoiceSettings onClose={() => setShowVoiceSettings(false)} onCharacterSelect={handleVoiceChange} />}
                 {showRules && (
                     <div className="fixed inset-0 z-[70] bg-black/70 flex items-center justify-center">
                         <div className="bg-white text-gray-800 max-w-2xl w-[90%] p-6 rounded-2xl shadow-2xl">

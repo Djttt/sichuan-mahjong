@@ -48,7 +48,8 @@ export type NetworkAction =
   | { type: 'ACTION_PENG'; playerId: string }
   | { type: 'ACTION_GANG'; playerId: string; isWanGang?: boolean; targetTileId?: string }
   | { type: 'ACTION_RESTART' }
-  | { type: 'ACTION_PASS'; playerId: string };
+  | { type: 'ACTION_PASS'; playerId: string }
+  | { type: 'ACTION_UPDATE_VOICE'; playerId: string; voiceCharacter: string };
 
 export interface SocketMessage {
   roomId: string;

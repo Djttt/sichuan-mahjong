@@ -11,11 +11,14 @@ import {
     playDiscardVoice
 } from '../services/voiceService';
 
+
+
 interface VoiceSettingsProps {
     onClose: () => void;
+    onCharacterSelect?: (character: VoiceCharacter) => void;
 }
 
-export const VoiceSettings: React.FC<VoiceSettingsProps> = ({ onClose }) => {
+export const VoiceSettings: React.FC<VoiceSettingsProps> = ({ onClose, onCharacterSelect }) => {
     const [selectedCharacter, setSelectedCharacter] = useState<VoiceCharacter>(getSavedCharacter());
     const [voiceEnabled, setVoiceEnabled] = useState(getVoiceEnabled());
     const [isPreloading, setIsPreloading] = useState(false);
@@ -23,6 +26,9 @@ export const VoiceSettings: React.FC<VoiceSettingsProps> = ({ onClose }) => {
     const handleCharacterChange = async (character: VoiceCharacter) => {
         setSelectedCharacter(character);
         saveCharacter(character);
+        if (onCharacterSelect) {
+            onCharacterSelect(character);
+        }
 
         // 预加载新角色的声音
         setIsPreloading(true);
@@ -90,8 +96,8 @@ export const VoiceSettings: React.FC<VoiceSettingsProps> = ({ onClose }) => {
                                 onClick={() => handleCharacterChange(char.id)}
                                 disabled={!voiceEnabled}
                                 className={`p-3 rounded-xl border-2 transition-all ${selectedCharacter === char.id
-                                        ? 'border-emerald-400 bg-emerald-500/20 text-emerald-300'
-                                        : 'border-slate-600 bg-slate-700/50 text-gray-300 hover:border-slate-500'
+                                    ? 'border-emerald-400 bg-emerald-500/20 text-emerald-300'
+                                    : 'border-slate-600 bg-slate-700/50 text-gray-300 hover:border-slate-500'
                                     } ${!voiceEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                             >
                                 <div className="flex items-center gap-2">
@@ -114,8 +120,8 @@ export const VoiceSettings: React.FC<VoiceSettingsProps> = ({ onClose }) => {
                         onClick={handlePreview}
                         disabled={!voiceEnabled || isPreloading}
                         className={`flex-1 py-3 rounded-xl font-bold transition-all flex items-center justify-center gap-2 ${voiceEnabled && !isPreloading
-                                ? 'bg-blue-600 hover:bg-blue-500 text-white'
-                                : 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                            ? 'bg-blue-600 hover:bg-blue-500 text-white'
+                            : 'bg-gray-600 text-gray-400 cursor-not-allowed'
                             }`}
                     >
                         <Volume2 size={18} />
@@ -136,15 +142,16 @@ export const VoiceSettings: React.FC<VoiceSettingsProps> = ({ onClose }) => {
 // 小型声音设置按钮组件，可用于在界面上显示
 interface VoiceSettingsButtonProps {
     onClick: () => void;
+    className?: string; // Add className support
 }
 
-export const VoiceSettingsButton: React.FC<VoiceSettingsButtonProps> = ({ onClick }) => {
+export const VoiceSettingsButton: React.FC<VoiceSettingsButtonProps> = ({ onClick, className = '' }) => {
     const [voiceEnabled] = useState(getVoiceEnabled());
 
     return (
         <button
             onClick={onClick}
-            className="bg-white/10 hover:bg-white/20 backdrop-blur-md text-white p-2 rounded-lg transition-all border border-white/20 shadow-lg"
+            className={`bg-white/10 hover:bg-white/20 backdrop-blur-md text-white p-2 rounded-lg transition-all border border-white/20 shadow-lg ${className}`}
             title="声音设置"
         >
             {voiceEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
