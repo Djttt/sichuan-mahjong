@@ -251,8 +251,9 @@ function App() {
 
                     // Check using standard 13-tile hand (next player hasn't drawn yet)
                     const canH = canHu([...p.hand, tileToRemove], p.dingQue || 'WAN');
-                    const canP = canPeng(p.hand, tileToRemove);
-                    const canG = canGang(p.hand, tileToRemove);
+                    const isDingQue = p.dingQue && tileToRemove.suit === p.dingQue;
+                    const canP = !isDingQue && canPeng(p.hand, tileToRemove);
+                    const canG = !isDingQue && canGang(p.hand, tileToRemove);
 
                     return canH || canP || canG;
                 });
@@ -540,9 +541,12 @@ function App() {
                         if (p.skippedDiscardId === lastDiscard!.id) return false;
 
                         // Check validity - everyone has 13 tiles max currently if waiting
-                        return canHu([...p.hand, lastDiscard!], p.dingQue || 'WAN') ||
-                            canPeng(p.hand, lastDiscard!) ||
-                            canGang(p.hand, lastDiscard!);
+                        const canH = canHu([...p.hand, lastDiscard!], p.dingQue || 'WAN');
+                        const isDingQue = p.dingQue && lastDiscard!.suit === p.dingQue;
+                        const canP = !isDingQue && canPeng(p.hand, lastDiscard!);
+                        const canG = !isDingQue && canGang(p.hand, lastDiscard!);
+
+                        return canH || canP || canG;
                     });
 
                     if (!anyClaimsLeft) {
@@ -614,10 +618,10 @@ function App() {
 
                     // Dian Hu Check (Hand + Discard)
                     const canDianHu = canHu([...human.hand, lastDiscard], human.dingQue || 'WAN');
+                    const isDingQue = human.dingQue && lastDiscard.suit === human.dingQue;
 
                     const canAction =
-                        canPeng(human.hand, lastDiscard) ||
-                        canGang(human.hand, lastDiscard) ||
+                        (!isDingQue && (canPeng(human.hand, lastDiscard) || canGang(human.hand, lastDiscard))) ||
                         canDianHu;
 
                     if (canAction) {
@@ -1612,9 +1616,10 @@ function App() {
                             // 别人打牌时的操作判断 - 确保不是自己打的牌，且没有被跳过
                             // 关键修复：即使轮到自己（系统自动摸牌了），如果上一张弃牌还在（说明是刚刚上家打出的），依然可以碰/杠/胡它（抢在自己出牌前）
                             const isInterruptedTurn = isMyTurn && lastDiscard && !isMyOwnDiscard;
+                            const isDingQueTarget = myPlayer.dingQue && lastDiscard && lastDiscard.suit === myPlayer.dingQue;
 
-                            const canDoPeng = (!isMyTurn || isInterruptedTurn) && lastDiscard && !isMyOwnDiscard && !isSkipped && canPeng(myPlayer.hand, lastDiscard);
-                            const canDoMingGang = (!isMyTurn || isInterruptedTurn) && lastDiscard && !isMyOwnDiscard && !isSkipped && canGang(myPlayer.hand, lastDiscard);
+                            const canDoPeng = (!isMyTurn || isInterruptedTurn) && lastDiscard && !isMyOwnDiscard && !isSkipped && !isDingQueTarget && canPeng(myPlayer.hand, lastDiscard);
+                            const canDoMingGang = (!isMyTurn || isInterruptedTurn) && lastDiscard && !isMyOwnDiscard && !isSkipped && !isDingQueTarget && canGang(myPlayer.hand, lastDiscard);
 
                             // 关键修复：点炮胡检测
                             // 构造临时手牌：现有手牌 + 别人打出的这张牌
@@ -1633,8 +1638,9 @@ function App() {
                             })();
 
                             // 自己回合时的操作判断
-                            const canDoAnGang = isMyTurn && canGang(myPlayer.hand);
-                            const canDoBuGang = isMyTurn && hasBuGang(myPlayer.hand, myPlayer.melds);
+                            // AN GANG / BU GANG: Cannot gang DingQue tiles
+                            const canDoAnGang = isMyTurn && canGang(myPlayer.hand.filter(t => t.suit !== myPlayer.dingQue));
+                            const canDoBuGang = isMyTurn && hasBuGang(myPlayer.hand.filter(t => t.suit !== myPlayer.dingQue), myPlayer.melds);
                             const canDoZiMoHu = isMyTurn && canHu(myPlayer.hand, myPlayer.dingQue || 'WAN');
 
                             // 智能按钮逻辑:
