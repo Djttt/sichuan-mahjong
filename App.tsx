@@ -310,11 +310,14 @@ function App() {
                 const interruptedPlayerId = prev.currentTurnPlayerId;
                 let newPlayers = prev.players.map(p => {
                     if (p.id === interruptedPlayerId) {
-                        // Remove the last added tile (the draw from ACTION_DISCARD)
-                        // Safe to pop because we just added it in prev 'ACTION_DISCARD'
-                        const poppedHand = [...p.hand];
-                        poppedHand.pop();
-                        return { ...p, hand: poppedHand };
+                        // Only revert if they actually drew a tile (hand length % 3 === 2)
+                        // Standard hand (13) % 3 === 1. Drawn hand (14) % 3 === 2.
+                        if (p.hand.length % 3 === 2) {
+                            // Remove the last added tile (the draw from ACTION_DISCARD)
+                            const poppedHand = [...p.hand];
+                            poppedHand.pop();
+                            return { ...p, hand: poppedHand };
+                        }
                     }
                     return p;
                 });
