@@ -38,6 +38,7 @@ export function handleDiscardLogic(prev: GameState, action: { type: 'ACTION_DISC
     const discarderId = action.playerId;
     const anyClaims = newPlayers.some(p => {
         if (p.id === discarderId) return false;
+        if (p.isHu) return false; // Hu'd players cannot claim
         // If already skipped, ignore
         if (p.skippedDiscardId === tileToRemove.id) return false;
 
@@ -98,6 +99,7 @@ export function handlePassLogic(prev: GameState, action: { type: 'ACTION_PASS'; 
 
     if (lastDiscard) {
         const anyClaimsLeft = updatedPlayers.some(p => {
+            if (p.isHu) return false;
             if (p.skippedDiscardId === lastDiscard!.id) return false;
 
             // Check validity - everyone has 13 tiles max currently if waiting

@@ -245,6 +245,7 @@ function App() {
                 const discarderId = action.playerId;
                 const anyClaims = newPlayers.some(p => {
                     if (p.id === discarderId) return false;
+                    if (p.isHu) return false;
                     // If already skipped, ignore
                     if (p.skippedDiscardId === tileToRemove.id) return false;
 
@@ -367,58 +368,112 @@ function App() {
             }
 
             if (action.type === 'ACTION_HU') {
-                const winner = prev.players.find(p => p.id === action.playerId);
-                if (!winner) return prev;
+                const winnerIndex = prev.players.findIndex(p => p.id === action.playerId);
+                if (winnerIndex === -1) return prev;
+                const winner = prev.players[winnerIndex];
 
-                const fan = calculateFan(winner.hand, winner.melds);
+                // 1. Identify Hand & Tile (ZiMo vs DianHu)
+                // If lastDiscard exists, it's DianHu (Win on Discard). If not, it's ZiMo (Self-Draw).
+                const isZiMo = !prev.lastDiscard;
+                const targetTile = isZiMo ? null : prev.lastDiscard;
+
+                // 2. Update Winner's Hand (Visual: "上手")
+                let newHand = [...winner.hand];
+                if (targetTile) {
+                    newHand.push(targetTile);
+                }
+                newHand = sortHand(newHand, winner.dingQue);
+
+                // 3. Score Calculation
+                const fan = calculateFan(newHand, winner.melds);
                 const points = Math.max(1, Math.pow(2, fan - 1) * 10);
 
-                const newPlayers = prev.players.map(p => {
-                    if (p.id === action.playerId) {
-                        return { ...p, isHu: true, score: p.score + points };
-                    }
-                    return p;
-                });
+                let newPlayers = [...prev.players];
+
+                // Update Winner
+                newPlayers[winnerIndex] = {
+                    ...winner,
+                    hand: newHand,
+                    isHu: true,
+                    score: winner.score + points
+                };
+
+                // Update Losers (Score Deduction)
+                if (isZiMo) {
+                    // Zi Mo: All non-Hu players pay
+                    newPlayers = newPlayers.map(p => {
+                        if (p.id !== winner.id && !p.isHu) {
+                            return { ...p, score: p.score - points };
+                        }
+                        return p;
+                    });
+                } else {
+                    // Dian Pao: Discarder pays
+                    const discarderId = prev.currentTurnPlayerId;
+                    newPlayers = newPlayers.map(p => {
+                        if (p.id === discarderId) {
+                            return { ...p, score: p.score - points };
+                        }
+                        return p;
+                    });
+                }
 
                 addScoreToast(`胡牌！${fan}番 +${points}`, 'positive');
 
-                // Bloody Battle: continue until all but one have Hu or tiles empty
+                // 4. Bloody Battle Continuation Check
+                // End if 3 players have Hu (only 1 left) or tiles ran out
                 const huCount = newPlayers.filter(p => p.isHu).length;
                 const shouldEnd = huCount >= newPlayers.length - 1 || prev.remainingTiles === 0;
 
-                // Advance turn to next non-Hu player if current player just Hu'd (Self-Draw / Zi Mo)
+                let nextPhase = prev.phase;
                 let nextPlayerId = prev.currentTurnPlayerId;
                 let currentDeck = [...prev.deck];
+                let nextLastDiscard = null; // Hu consumes the discard
 
-                if (action.playerId === prev.currentTurnPlayerId && !shouldEnd) {
-                    const currentIndex = newPlayers.findIndex(p => p.id === action.playerId);
-                    let nextIndex = (currentIndex + 1) % newPlayers.length;
+                if (shouldEnd) {
+                    nextPhase = 'GAME_OVER';
+                } else {
+                    // Advance Turn: Start from WINNER and find next non-Hu player
+                    let currentSearchIndex = winnerIndex;
                     let safety = 0;
-                    // Find next non-Hu player
-                    while (newPlayers[nextIndex]?.isHu && safety < newPlayers.length) {
-                        nextIndex = (nextIndex + 1) % newPlayers.length;
+                    let foundNext = false;
+
+                    while (safety < newPlayers.length) {
+                        currentSearchIndex = (currentSearchIndex + 1) % newPlayers.length;
+                        if (!newPlayers[currentSearchIndex].isHu) {
+                            foundNext = true;
+                            break;
+                        }
                         safety++;
                     }
-                    nextPlayerId = newPlayers[nextIndex]?.id ?? '';
 
-                    // Auto Draw for next player
-                    if (currentDeck.length > 0) {
-                        const newTile = currentDeck.shift()!;
-                        const playerToUpdate = newPlayers[nextIndex];
-                        newPlayers[nextIndex] = {
-                            ...playerToUpdate,
-                            hand: [...playerToUpdate.hand, newTile]
-                        };
+                    if (foundNext) {
+                        nextPlayerId = newPlayers[currentSearchIndex].id;
+
+                        // AUTO DRAW for the Next Player
+                        if (currentDeck.length > 0) {
+                            const newTile = currentDeck.shift()!;
+                            newPlayers[currentSearchIndex] = {
+                                ...newPlayers[currentSearchIndex],
+                                hand: [...newPlayers[currentSearchIndex].hand, newTile] // unsorted new draw
+                            };
+                        } else {
+                            nextPhase = 'GAME_OVER';
+                        }
+                    } else {
+                        // Should be covered by shouldEnd check, but safety fallback
+                        nextPhase = 'GAME_OVER';
                     }
                 }
 
                 const newState: GameState = {
                     ...prev,
                     players: newPlayers,
-                    phase: shouldEnd ? 'GAME_OVER' : prev.phase,
+                    phase: nextPhase,
                     currentTurnPlayerId: nextPlayerId,
                     deck: currentDeck,
-                    remainingTiles: currentDeck.length
+                    remainingTiles: currentDeck.length,
+                    lastDiscard: nextLastDiscard
                 };
 
                 broadcastState(newState);
@@ -481,6 +536,7 @@ function App() {
 
                 if (lastDiscard) {
                     const anyClaimsLeft = updatedPlayers.some(p => {
+                        if (p.isHu) return false;
                         if (p.skippedDiscardId === lastDiscard!.id) return false;
 
                         // Check validity - everyone has 13 tiles max currently if waiting
@@ -550,7 +606,7 @@ function App() {
 
             if (lastDiscard && lastDiscard.id !== skippedDiscardId) {
                 // Check all non-turn players
-                const interruptors = gameState.players.filter(p => !p.id.startsWith('bot-') && p.id !== gameState.currentTurnPlayerId);
+                const interruptors = gameState.players.filter(p => !p.isHu && !p.id.startsWith('bot-') && p.id !== gameState.currentTurnPlayerId);
 
                 for (const human of interruptors) {
                     // If this human already passed this tile, skip blocking
