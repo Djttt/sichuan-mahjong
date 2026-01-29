@@ -337,19 +337,19 @@ describe('胡牌(Hu) - 基础胡牌条件', () => {
 
 describe('番数计算(calculateFan)', () => {
 
-    it('基础番: 普通胡牌应该是1番', () => {
+    it('基础番: 普通胡牌应该是0番', () => {
         const hand = createTiles('1w 1w 2w 3w 4w 5w 6w 7w 1b 2b 3b 7b 8b 9b');
         const melds: TileData[][] = [];
-        expect(calculateFan(hand, melds)).toBe(1);
+        expect(calculateFan(hand, melds)).toBe(0);
     });
 
-    it('七对子: 应该是3番(基础1 + 七对2)', () => {
+    it('七对子: 应该是2番', () => {
         const hand = createTiles('1w 1w 3w 3w 5w 5w 7w 7w 9w 9w 2b 2b 4b 4b');
         const melds: TileData[][] = [];
-        expect(calculateFan(hand, melds)).toBe(3);
+        expect(calculateFan(hand, melds)).toBe(2);
     });
 
-    it('碰碰胡: 全刻子应该是3番(基础1 + 碰碰胡2)', () => {
+    it('碰碰胡: 全刻子应该是1番', () => {
         const hand = createTiles('1w 1w');
         const melds: TileData[][] = [
             createTiles('1b 1b 1b'),
@@ -357,16 +357,16 @@ describe('番数计算(calculateFan)', () => {
             createTiles('5b 5b 5b'),
             createTiles('7b 7b 7b')
         ];
-        expect(calculateFan(hand, melds)).toBe(3);
+        expect(calculateFan(hand, melds)).toBe(1);
     });
 
-    it('清一色: 只有一种花色应该是3番(基础1 + 清一色2)', () => {
+    it('清一色: 只有一种花色应该是2番', () => {
         const hand = createTiles('1w 1w 2w 3w 4w 5w 6w 7w 7w 8w 9w 1w 2w 3w');
         const melds: TileData[][] = [];
-        expect(calculateFan(hand, melds)).toBe(3);
+        expect(calculateFan(hand, melds)).toBe(2);
     });
 
-    it('清一色碰碰胡: 应该是5番(基础1 + 清一色2 + 碰碰胡2)', () => {
+    it('清一色碰碰胡: 应该是3番(清一色2 + 碰碰胡1)', () => {
         const hand = createTiles('1w 1w');
         const melds: TileData[][] = [
             createTiles('2w 2w 2w'),
@@ -374,13 +374,13 @@ describe('番数计算(calculateFan)', () => {
             createTiles('6w 6w 6w'),
             createTiles('8w 8w 8w')
         ];
-        expect(calculateFan(hand, melds)).toBe(5);
+        expect(calculateFan(hand, melds)).toBe(3);
     });
 
-    it('清一色七对子: 应该是5番(基础1 + 清一色2 + 七对2)', () => {
+    it('清一色七对子: 应该是4番(清一色2 + 七对2)', () => {
         const hand = createTiles('1w 1w 2w 2w 3w 3w 4w 4w 5w 5w 6w 6w 7w 7w');
         const melds: TileData[][] = [];
-        expect(calculateFan(hand, melds)).toBe(5);
+        expect(calculateFan(hand, melds)).toBe(4);
     });
 });
 

@@ -8,10 +8,10 @@ const createTile = (id: string, suit: any, rank: number): TileData => ({ id, sui
 describe('Turn Logic - Discard & Claim Flow', () => {
     // Setup initial state
     const playerA: Player = {
-        id: 'A', name: 'A', position: 'bottom', hand: [], discards: [], melds: [], score: 0, dingQue: 'TONG', isHu: false, avatar: '1'
+        id: 'A', name: 'A', position: 'bottom', hand: [], discards: [], melds: [], score: 0, dingQue: 'TONG', isHu: false, avatar: '1', gangScore: 0
     };
     const playerB: Player = {
-        id: 'B', name: 'B', position: 'right', hand: [], discards: [], melds: [], score: 0, dingQue: 'TONG', isHu: false, avatar: '2'
+        id: 'B', name: 'B', position: 'right', hand: [], discards: [], melds: [], score: 0, dingQue: 'TONG', isHu: false, avatar: '2', gangScore: 0
     };
 
     // Initial State Template

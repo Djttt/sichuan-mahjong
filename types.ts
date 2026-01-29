@@ -22,6 +22,7 @@ export interface Player {
   isReady?: boolean;
   voiceCharacter?: string; // ID of the voice character
   skippedDiscardId?: string | null; // Tracks which discard id this player has explicitly passed
+  gangScore: number; // Tracks revenue from Gangs for "Return Tax" (Tui Shui)
 }
 
 export type GamePhase = 'LOBBY' | 'DEALING' | 'DINGQUE' | 'PLAYING' | 'GAME_OVER';
@@ -36,6 +37,7 @@ export interface GameState {
   players: Player[];
   lastDiscard: TileData | null;
   myPlayerId: string; // The ID of the local user
+  lastAction: NetworkAction | null; // Track last action for context (e.g. GangShangKaiHua)
 }
 
 // Network Payloads

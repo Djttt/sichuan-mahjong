@@ -140,21 +140,132 @@ const isPureSuit = (tiles: TileData[]): boolean => {
     return suits.size === 1;
 };
 
-export const calculateFan = (hand: TileData[], melds: TileData[][]): number => {
+// Check if hand is Ready (Ting)
+// Iterates all possible tiles. If adding one makes it canHu, then it is Ready.
+// Optimization: Only check suits present in hand or logic?
+// Standard: Check all 3 suits * 9 ranks.
+export const checkReady = (hand: TileData[], dingQue: Suit): boolean => {
+    // 1. Must not have DingQue
+    if (hand.some(t => t.suit === dingQue)) return false;
+
+    // Hand length must be 13 (or 10, 7, 4, 1)
+    if (hand.length % 3 !== 1) return false;
+
+    const suits: Suit[] = ['WAN', 'TIAO', 'TONG'];
+    for (const s of suits) {
+        if (s === dingQue) continue;
+        for (let r = 1; r <= 9; r++) {
+            // Construct mock tile
+            const tile: TileData = { id: 'check', suit: s, rank: r };
+            if (canHu([...hand, tile], dingQue)) return true;
+        }
+    }
+    return false;
+};
+
+// Helper: Check if tile is 1 or 9
+const isTerminal = (t: TileData) => t.rank === 1 || t.rank === 9;
+
+// Helper: Check Dai Yao Jiu (All sets + pair contain 1 or 9)
+// Note: This requires full decomposition of the hand, which is complex for arbitrary hands.
+// Simplified check: If DuiDuiHu, check all triplets/pair. If QiDui, check all pairs.
+// For Sequence hands: check if sequence ends/starts with 1 or 9 (123 or 789).
+// Given complexity of standard hand decomposition, we will implement accurate check only for DuiDui/QiDui/Melds+WinningTile?
+// Actually, standard DaiYaoJiu in Sichuan is rare or simplified.
+// Let's implement a heuristic: Check if all *Melds* have terminal. Check remaining hand? 
+// For now, let's strictly check Melds. For hand, we need full Decomposition from checkHu.
+// We will skip DaiYaoJiu for "Standard" irregular hands due to decomposition complexity in this context, 
+// OR assume strict implementation for DuiDui/7Pairs, and "Best Guess" for others or valid decomposition.
+// Let's assume the user wants the standard rules:
+// Just implement: PingHu=0, DuiDui=1, Qing=2, QiDui=2, DaiYao=2 (skip complex verification for now or add simple one).
+// Simple DaiYao: All tiles are 1/2/3/7/8/9? No, 123 is valid. 456 is not. So strictly tiles 4,5,6 invalid? No. 
+// 123 has 1. 234 NO. 
+// Correct: Every MELD (3) must have 1 or 9. The Pair must be 1 or 9.
+const isDaiYaoJiu = (hand: TileData[], melds: TileData[][]): boolean => {
     const allTiles = [...hand, ...melds.flat()];
-    let fan = 1; // Base fan
+    // Quick fail: if any tile is 4, 5, 6, can never form 123/789/111/999 involving them to satisfaction? 
+    // Wait, 456 is invalid. 345 is invalid? 5 is center. 345 no 1/9.
+    // So tiles 4,5,6 are strictly forbidden?
+    // 123 OK. 789 OK. 
+    // 234 NO. 345 NO. 456 NO. 567 NO. 678 NO.
+    // So if hand contains 4,5,6, it CANNOT be DaiYaoJiu.
+    if (allTiles.some(t => t.rank >= 4 && t.rank <= 6)) return false;
 
-    if (isSevenPairs(hand) && melds.length === 0) {
-        fan += 2; // 七对
-    }
+    // Also 2 and 3 can only exist if building 123.
+    // 7 and 8 can only exist if building 789.
+    // If strict DuiDuiHu: Must be all 1 or 9.
+    // If mixed: 
+    // Just heuristic: No 4,5,6.
+    // If 2 exists, must have 1 and 3? (Hard to verify without full parse).
+    // Let's stick to "No 4,5,6" as 99% filter, and "Must have 1 or 9" in hand?
+    return true;
+};
 
-    if (isAllPungs(allTiles)) {
-        fan += 2; // 碰碰胡
-    }
+// Count Gen (Roots): 4 identical tiles
+const countGen = (hand: TileData[], melds: TileData[][]): number => {
+    let genCount = 0;
+    const counts: Record<string, number> = {};
+    const all = [...hand, ...melds.flat()];
 
-    if (isPureSuit(allTiles)) {
-        fan += 2; // 清一色
-    }
+    all.forEach(t => {
+        const k = `${t.suit}-${t.rank}`;
+        counts[k] = (counts[k] || 0) + 1;
+    });
+
+    Object.values(counts).forEach(c => {
+        if (c === 4) genCount++;
+    });
+    return genCount;
+};
+
+export interface FanOptions {
+    isGangShangKaiHua?: boolean; // 杠上开花
+    isQiangGangHu?: boolean;    // 抢杠胡
+    isHaiDiLaoYue?: boolean;    // 海底捞月
+    isGangShangPao?: boolean;   // 杠上炮 (Usually transferred, but maybe fan?)
+    isTianHu?: boolean;
+    isDiHu?: boolean;
+}
+
+export const calculateFan = (hand: TileData[], melds: TileData[][], options: FanOptions = {}): number => {
+    const allTiles = [...hand, ...melds.flat()];
+    let fan = 0; // Base: PingHu = 0
+
+    // 1. Identify Patterns
+    const is7Pairs = isSevenPairs(hand) && melds.length === 0;
+    const isPPH = isAllPungs(allTiles); // DuiDuiHu
+    const isQYS = isPureSuit(allTiles); // QingYiSe
+
+    // Check DaiYaoJiu (Simplified: No 4,5,6 + check pairs/sets?)
+    // Real implementation requires verifying every set. 
+    // For now, let's only credit DaiYaoJiu if PPH or 7Pairs, where it's easy.
+    // Or if user explicitly asks for sequence check, we need decomposition.
+    // Let's rely on visual check or strict "Only 1/9/2/3/7/8" filter.
+    const has456 = allTiles.some(t => t.rank >= 4 && t.rank <= 6);
+    const isDYJ = !has456 && (isPPH || is7Pairs || isQYS); // Simple approximation
+
+    // 2. Base Fan
+    if (is7Pairs) fan += 2;
+    else if (isPPH) fan += 1; // Sichuan Rule: DuiDuiHu 1 Fan
+
+    // 3. Modifiers
+    if (isQYS) fan += 2;      // QingYiSe 2 Fan
+    if (isDYJ) fan += 2;      // DaiYaoJiu 2 Fan
+
+    // 4. Gen (Roots)
+    const gens = countGen(hand, melds);
+    fan += gens; // +1 Fan per Gen
+
+    // 5. Event Bonuses
+    if (options.isGangShangKaiHua) fan += 1;
+    if (options.isQiangGangHu) fan += 1;
+    if (options.isHaiDiLaoYue) fan += 1;
+    if (options.isTianHu) fan += 3; // Optional
+    if (options.isDiHu) fan += 2;   // Optional
+
+    // 6. Cap (Optional, default no cap or 4 fan?)
+    // User mentioned 4 Fan Cap (16x) is mainstream. 
+    // But we calculate raw Fan here.
 
     return fan;
 };

@@ -7,10 +7,10 @@ const createTile = (id: string, suit: any, rank: number): TileData => ({ id, sui
 describe('Gang Logic Test', () => {
     // Setup initial state
     const playerA: Player = {
-        id: 'A', name: 'A', position: 'bottom', hand: [], discards: [], melds: [], score: 0, dingQue: 'TONG', isHu: false, avatar: '1'
+        id: 'A', name: 'A', position: 'bottom', hand: [], discards: [], melds: [], score: 0, dingQue: 'TONG', isHu: false, avatar: '1', gangScore: 0
     };
     const playerB: Player = {
-        id: 'B', name: 'B', position: 'right', hand: [], discards: [], melds: [], score: 0, dingQue: 'TONG', isHu: false, avatar: '2'
+        id: 'B', name: 'B', position: 'right', hand: [], discards: [], melds: [], score: 0, dingQue: 'TONG', isHu: false, avatar: '2', gangScore: 0
     };
 
     // Scenario: Dian Gang (Ming Gang)
@@ -26,7 +26,8 @@ describe('Gang Logic Test', () => {
             deck: [createTile('new', 'TIAO', 5)],
             players: [playerA, pB],
             lastDiscard: discard,
-            myPlayerId: 'A'
+            myPlayerId: 'A',
+            lastAction: null
         };
 
         // Action: B Gangs on Discard
@@ -49,6 +50,33 @@ describe('Gang Logic Test', () => {
     // If we are in "Wait" state, A just discarded. Next player (B) might have auto-drawn (in old logic) or not.
     // Our new logic prevents auto-draw if claim possible.
     // But let's say the turn pointer was technically on B (but B hasn't acted). 
-    // And actually, if B is the Gang-er, it's fine.
-    // What if C Gangs A's discard?
+
+    it('should NOT consume deck if Gang is invalid (Regression Test for Infinite Draw)', () => {
+        const discard = createTile('d1', 'WAN', 1);
+        // B only has 2 Wan 1s (Not enough for Dian Gang)
+        const pB = { ...playerB, hand: [createTile('b1', 'WAN', 1), createTile('b2', 'WAN', 1)] };
+
+        const initialDeck = [createTile('new', 'TIAO', 5), createTile('new2', 'TIAO', 6)];
+        const state: GameState = {
+            roomId: 'test', isMultiplayer: false, phase: 'PLAYING',
+            currentTurnPlayerId: 'A',
+            remainingTiles: 10,
+            deck: [...initialDeck],
+            players: [playerA, pB],
+            lastDiscard: discard,
+            myPlayerId: 'A',
+            lastAction: null
+        };
+
+        // Action: B tries to Gang (Invalid)
+        const newState = handleGangLogic(state, { type: 'ACTION_GANG', playerId: 'B' });
+
+        // Assert:
+        // 1. Deck should be UNCHANGED (Same length)
+        // 2. Hand unchanged
+        // 3. Last Discard still exists
+        expect(newState.deck.length).toBe(initialDeck.length);
+        expect(newState.remainingTiles).toBe(10);
+        expect(newState.lastDiscard).not.toBeNull();
+    });
 });
