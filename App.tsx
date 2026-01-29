@@ -1897,15 +1897,7 @@ function App() {
                                                 杠
                                             </button>
                                             {/* 不杠按钮 - 留牌之后仍可杠 */}
-                                            <button
-                                                onClick={() => setSelectedTileId(null)}
-                                                className="bg-gray-500 text-white font-bold text-sm w-16 h-16 rounded-full shadow-lg border-4 border-gray-700 hover:bg-gray-400"
-                                            >
-                                                <div className="flex flex-col items-center leading-tight">
-                                                    <span className="text-xs">不杠</span>
-                                                    <span className="text-10px text-gray-300">留牌</span>
-                                                </div>
-                                            </button>
+
                                         </>
                                     )}
 
@@ -1924,15 +1916,7 @@ function App() {
                                                 </div>
                                             </button>
                                             {/* 不杠按钮 - 留牌之后仍可杠 */}
-                                            <button
-                                                onClick={() => setSelectedTileId(null)}
-                                                className="bg-gray-500 text-white font-bold text-sm w-16 h-16 rounded-full shadow-lg border-4 border-gray-700 hover:bg-gray-400"
-                                            >
-                                                <div className="flex flex-col items-center leading-tight">
-                                                    <span className="text-xs">不杠</span>
-                                                    <span className="text-10px text-gray-300">留牌</span>
-                                                </div>
-                                            </button>
+
                                         </>
                                     )}
 
